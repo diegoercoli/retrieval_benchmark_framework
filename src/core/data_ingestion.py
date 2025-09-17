@@ -38,10 +38,12 @@ class DocumentIngestionService(IngestionService):
 
     def process(self, config: RAGConfiguration) -> int:
         """Your core business logic for document ingestion"""
-
+        if self.db_manager.collection_exists(config.collection_name):
+            print(f"Collection '{config.collection_name}' already exists.")
+            return 0
         # Your business logic here:
         # 1. Read files from filesystem based on source
-        json_docxs = scan_folder(config.main_folder / ".json")
+        json_docxs = scan_folder(config.main_folder, ".json")
         chunker = config.chunking
         all_chunks = []
         for json_docx in json_docxs:
@@ -58,16 +60,16 @@ class DocumentIngestionService(IngestionService):
             self.store_chunks(enriched_chunks, file_path)
         # Create collection with all chunks at once
         if all_chunks:
-            self.db_manager.create_collection(config.collection_name, all_chunks, overwrite=True)
+            self.db_manager.create_collection(config.collection_name, all_chunks)#, overwrite=True)
         return len(all_chunks)
 
     def store_chunks(self, chunks: List[CustomChunk] ,filepath: Path):
         with open(filepath, "w", encoding="utf-8") as f:
             for i, chunk in enumerate(chunks):
                 enriched_text = chunk.text
-                f.write(enriched_text + "\n")
-                f.write("-" * 200 + "\n")
-                print(f"=== Chunk_{i}_written ===")
+                f.write(enriched_text + "\n\n")
+                f.write("-" * 200 + "\n\n")
+                #print(f"=== Chunk_{i}_written ===")
         print(f"Chunks written to {filepath}")
 
 

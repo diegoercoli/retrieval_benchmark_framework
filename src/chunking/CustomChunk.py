@@ -117,11 +117,11 @@ class CustomMeta(DocMeta):
         parts = [self.filename]
 
         if self.chapter:
-            parts.append(self.chapter.title)
+            parts.append(f"{self.chapter.id} {self.chapter.title}")
         if self.section:
-            parts.append(self.section.title)
+            parts.append(f"{self.section.id} {self.section.title}")
         if self.subsection:
-            parts.append(self.subsection.title)
+            parts.append(f"{self.subsection.id} {self.subsection.title}")
         if self.division:
             parts.append(self.division)
 
@@ -160,14 +160,21 @@ class CustomChunk(DocChunk):
         # Method 1: Copy all fields from the original DocMeta to create CustomMeta
         # This preserves all the original DocMeta data and validation
         custom_meta_data = {
-            # Copy core DocMeta fields using the actual field names (not aliases)
             'doc_items': doc_chunk.meta.doc_items,
             'headings': doc_chunk.meta.headings,
-            'captions': doc_chunk.meta.captions,
             'origin': doc_chunk.meta.origin,
-            # Add custom fields
             'division': meta_extras.get('division', None)
         }
+
+        # Only include captions if it exists and is not None to avoid deprecation warning
+       # if hasattr(doc_chunk.meta, 'captions') and doc_chunk.meta.captions is not None:
+        #    try:
+                # Try to access captions, but catch any deprecation issues
+        #        captions = doc_chunk.meta.captions
+        #        custom_meta_data['captions'] = captions
+        #    except:
+                # If there's any issue accessing captions, skip it
+        #        pass
 
         # Add any additional custom fields from meta_extras
         for key, value in meta_extras.items():
@@ -237,7 +244,7 @@ class CustomChunk(DocChunk):
 
     @classmethod
     def get_fields(self) -> List[str]:
-        return CustomChunk.get_fields() + ["text"]
+        return CustomMeta.get_fields() + ["text"]
 
     def to_dict(self) -> dict:
         """Return chunk and metadata as a plain dictionary."""

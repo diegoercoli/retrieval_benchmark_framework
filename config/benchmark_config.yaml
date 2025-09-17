@@ -32,6 +32,10 @@ chunking:
   blacklist_chapters: # Not case sensitive
     - "Storia delle Revisioni"
     - "Contatti"
+    - "Indice"
+    - "Table of Contents"
+    - "Sommario"
+    - "Version History"
 
 # Configuration for the vector database
 vector_database:

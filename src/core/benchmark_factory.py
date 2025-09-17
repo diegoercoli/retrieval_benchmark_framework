@@ -145,7 +145,7 @@ class BenchmarkFactory:
             # Generate unique collection name
             strategy_name = chunk_strategy['name']
             collection_base_name = self.config['vector_database']['collection_name_suffix']
-            collection_name = f"{collection_base_name}_{strategy_name}_{embedding_model_name}"
+            collection_name = f"{strategy_name}-chunking_{embedding_model_name.split('/')[-1]}"
 
             # Create RAG configuration
             rag_config = RAGConfiguration(
@@ -172,11 +172,13 @@ class BenchmarkFactory:
                 max_tokens=chunk_strategy['num_tokens'],  # optional, by default derived from `tokenizer` for HF case
             )
             # Wrap in custom chunker
+            # Create CustomChunker with parameters that match the constructor signature
             return CustomChunker(
+                name=f"{strategy_name}_chunking",  # Add name parameter
+                blacklist_chapters=blacklist_chapters,  # Pass as constructor parameter
                 tokenizer=tokenizer,
-                blacklist_chapters=blacklist_chapters,
                 serializer_provider=MDTableSerializerProvider(),
-                merge_peers=True,  # optional, defaults to True
+                merge_peers=True,
             )
         else:
             raise ValueError(f"Unknown chunking strategy: {strategy_name}")
