@@ -29,6 +29,7 @@ class CustomChunker(HybridChunker):
         chapter_title = chunk.meta.chapter.title
         return chapter_title is None or  chapter_title in self.blacklist_chapters
 
+    ######## BASE_CHUNK INTERFACE ############
 
     def chunk(self, dl_doc: DoclingDocument, **kwargs: Any) -> Iterator[BaseChunk]:
         """Chunk the document hierarchically."""
@@ -61,4 +62,6 @@ class CustomChunker(HybridChunker):
             items.append(chunk.get_context_string())
         items.append(chunk.text)
         return self.delim.join(items)
+
+
 

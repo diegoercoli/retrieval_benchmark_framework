@@ -5,6 +5,9 @@ from dataclasses import dataclass
 import uuid
 from datetime import datetime
 
+from src.core.configuration import SearchType
+
+
 class DataType(Enum):
     TEXT = "text"
     NUMBER = "number"

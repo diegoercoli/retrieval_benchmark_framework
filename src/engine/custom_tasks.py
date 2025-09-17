@@ -11,12 +11,12 @@ class IngestionService(ABC):
     """Interface that clients must implement for ingestion business logic"""
 
     @abstractmethod
-    def process(self, source: str, config: RAGConfiguration) -> int:
+    def process(self,  config: RAGConfiguration) -> int:
         """
         Process ingestion from source, return processed count.
 
         Args:
-            source: Path or identifier for the data source
+            #source: Path or identifier for the data source
             config: RAG configuration containing chunk size, embedding model, etc.
 
         Returns:
@@ -32,12 +32,11 @@ class RetrievalService(ABC):
     """Interface that clients must implement for retrieval business logic"""
 
     @abstractmethod
-    def retieve_evaluate(self, query: str, config: RAGConfiguration) -> list:
+    def retieve_evaluate(self, qconfig: RAGConfiguration) -> list:
         """
         Search and return results based on query.
 
         Args:
-            query: Search query string
             config: RAG configuration containing search parameters
 
         Returns:
@@ -88,7 +87,7 @@ class AbstractIngestionTask(Task):
 
             # Delegate to external business logic service
             processed_count = await asyncio.get_event_loop().run_in_executor(
-                None, self.service.process, self.source, self.rag_configuration
+                None, self.service.process,  self.rag_configuration
             )
 
             self.logger.info(f"Ingestion completed: {processed_count} items processed")
@@ -128,7 +127,7 @@ class AbstractRetrievalTask(Task):
 
             # Delegate to external business logic service
             results = await asyncio.get_event_loop().run_in_executor(
-                None, self.service.search, query, self.rag_configuration
+                None, self.service.retieve_evaluate, self.rag_configuration
             )
 
             self.logger.info(f"Retrieval completed: {len(results)} results found")

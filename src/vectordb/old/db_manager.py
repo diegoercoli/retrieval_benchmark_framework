@@ -1,12 +1,10 @@
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Union
-from enum import Enum
-from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
 import uuid
-from datetime import datetime
+
+from weaviate.collections.classes.config import Property
 
 from src.core.configuration import SearchType
-from src.vectordb.db_interface import VectorDatabaseInterface, DataType, SearchResult, CollectionConfig
+from src.vectordb.old.db_interface import VectorDatabaseInterface, DataType, SearchResult, CollectionConfig
 
 
 class WeaviateAdapter(VectorDatabaseInterface):
