@@ -32,15 +32,13 @@ class RetrievalService(ABC):
     """Interface that clients must implement for retrieval business logic"""
 
     @abstractmethod
-    def retieve_evaluate(self, qconfig: RAGConfiguration) -> list:
+    def retrieve_evaluate(self, config: RAGConfiguration):
         """
         Search and return results based on query.
 
         Args:
             config: RAG configuration containing search parameters
 
-        Returns:
-            List of search results
 
         Raises:
             Exception: If search fails
@@ -67,7 +65,6 @@ class ProcessingService(ABC):
             Exception: If transformation fails
         """
         pass
-
 
 # ===================== ABSTRACT FRAMEWORK TASKS =====================
 

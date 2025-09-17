@@ -2,14 +2,14 @@
 embedding:
   # Embeddings convert a single text into a numerical vector that captures its semantic meaning.
   # These vectors are compared to measure similarity between query and documents.
-  model: "paraphrase-multilingual-MiniLM-L12-v2"
-  transformers_inference_api: 'http://172.20.64.1:5000'
+  model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  transformers_inference_api: 'http://192.168.1.9:5000'  #'http://172.20.64.1:5000'
 
 reranking:
   # Reranking works on pairs of texts (query, document).
   # It scores how relevant each document is to the query, and reorders the results accordingly.
   model: BAAI/bge-reranker-base
-  reranker_inference_api: 'http://172.20.64.1:5000'
+  reranker_inference_api: 'http://192.168.1.9:5000' #'http://172.20.64.1:5000'
 
 loading:
   input_folder: "../data/input_documents/"
@@ -48,7 +48,7 @@ vector_database:
 
 evaluation:
   dataset_path: "../data/MrWolf_datasetdomande_IngMan.xlsm"
-  report_path:
+  report_path: "../report"
 
 
 

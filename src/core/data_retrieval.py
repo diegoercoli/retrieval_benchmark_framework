@@ -1,12 +1,10 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
-
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from src.core.configuration import RAGConfiguration, SearchType, SearchConfiguration
 from src.core.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
-from src.engine.custom_tasks import RetrievalService
 from src.utils.dataset_loader import load_benchmark_dataset
 from src.utils.hashing_utils import generate_id_from_strings
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
@@ -19,6 +17,23 @@ class QueryEvaluationMetrics:
     recall: float
     f1_score: float
     ndcg: float  # Normalized Discounted Cumulative Gain
+
+class RetrievalService(ABC):
+    """Interface that clients must implement for retrieval business logic"""
+
+    @abstractmethod
+    def retrieve_evaluate(self, config: RAGConfiguration):
+        """
+        Search and return results based on query.
+
+        Args:
+            config: RAG configuration containing search parameters
+
+
+        Raises:
+            Exception: If search fails
+        """
+        pass
 
 
 class DocumentRetrievalService(RetrievalService):
@@ -45,7 +60,7 @@ class DocumentRetrievalService(RetrievalService):
                    config: RAGConfiguration) -> QueryEvaluationMetrics:
 
         #Generate unique_id based on these parameters:
-        id = generate_id_from_strings(search_type, config.model_manager.embedding_model, )
+        id = generate_id_from_strings(search_type, config.model_manager.embedding_model, config.chunking.name)
         #you must compute precision, recall f1_score and  NormalizedDiscountedCumulativeGain
         return None
 

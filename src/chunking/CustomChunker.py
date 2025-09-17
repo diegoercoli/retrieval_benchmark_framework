@@ -8,7 +8,7 @@ from src.chunking.CustomChunk import CustomChunk
 
 class CustomChunker(HybridChunker):
 
-    def __init__(self, blacklist_chapters: Optional[List[str]] = None, **args):
+    def __init__(self, name: str = "", blacklist_chapters: Optional[List[str]] = None, **args):
         """
         Initialize the custom hierarchical chunker.
 
@@ -17,12 +17,17 @@ class CustomChunker(HybridChunker):
             **args: Additional arguments passed to the parent HybridChunker.
         """
         super().__init__(**args)
+        self._name  = name if name != "" else "hierachical_chunking"
         self._processed_chunks: List[CustomChunk] = []
         self.blacklist_chapters: List[str] = blacklist_chapters or []
 
     @property
     def processed_chunks(self) -> List[CustomChunk]:
         return self._processed_chunks
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     def __filter_chapter(self, chunk: CustomChunk) -> bool:
         """Return True if the chunk should be filtered out based on blacklist."""

@@ -22,8 +22,8 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       ENABLE_MODULES: 'text2vec-transformers,reranker-transformers'  # Add this back
       DEFAULT_VECTORIZER_MODULE: none
-      TRANSFORMERS_INFERENCE_API:  'http://172.20.64.1:5000'   #'http://192.168.1.9:5000'      #'http://transformers-inference:8080' #'  # Point to your Flask app
-      RERANKER_INFERENCE_API:  'http://172.20.64.1:5000'  #  'http://192.168.1.9:5000      #'http://reranker-inference:8080' #'http://172.20.66.152 :5000'     # Point to your Flask rerank endpoint
+      TRANSFORMERS_INFERENCE_API:  'http://192.168.1.9:5000'   #   'http://172.20.64.1:5000'    #'http://transformers-inference:8080' #'  # Point to your Flask app
+      RERANKER_INFERENCE_API:   'http://192.168.1.9:5000'  #  'http://172.20.64.1:5000'     #'http://reranker-inference:8080' #'http://172.20.66.152 :5000'     # Point to your Flask rerank endpoint
        #TRANSFORMERS_INFERENCE_API: 'http://transformers-inference:8080'
       #RERANKER_INFERENCE_API: 'http://reranker-inference:8080'
       ENABLE_API_BASED_MODULES: 'true'

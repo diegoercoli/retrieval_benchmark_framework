@@ -1,4 +1,7 @@
 from datetime import datetime
+from pathlib import Path
+
+import yaml
 from flask import Flask, request, jsonify
 import threading
 import json
@@ -6,7 +9,7 @@ from FlagEmbedding import FlagReranker
 import numpy as np
 import torch
 import threading
-import logging
+#import logging
 from sentence_transformers import SentenceTransformer
 
 from src.core.model_manager import ModelManager
@@ -26,13 +29,13 @@ def start_server( configured_model_manager: ModelManager, host: str = "0.0.0.0",
         use_thread (bool): If True, run Flask in a background thread.
                            If False, block the main process.
     """
-    log_filename = "vectors.log"
-    logging.basicConfig(
-        filename=log_filename,
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+    #log_filename = "vectors.log"
+    #logging.basicConfig(
+    #    filename=log_filename,
+    #    level=logging.INFO,
+    #    format="%(asctime)s - %(levelname)s - %(message)s",
+    #    datefmt="%Y-%m-%d %H:%M:%S"
+    #)
     model_manager = configured_model_manager
     #Load the models
     model_manager.preload_models()
@@ -58,7 +61,7 @@ def readiness_check():
 
 @app.route('/meta', methods=['GET'])
 def readiness_check_2():
-    logging.info(f"Received META request")
+    #logging.info(f"Received META request")
     return jsonify({'status': 'Ready'}), 200
 
 
@@ -146,7 +149,7 @@ def vectorize():
         #    level=logging.INFO,
         #    format='%(asctime)s - %(levelname)s - %(message)s'
         #)
-        logging.info(f"Received text for vectorization: {text}")
+        #logging.info(f"Received text for vectorization: {text}")
 
         ####
         embeddings = model_manager.embedding_model.encode(text).tolist()
@@ -156,5 +159,98 @@ def vectorize():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def load_config_and_start_server(config_path: str = "config/benchmark_config.yaml"):
+    """
+    Load configuration from YAML file and start the embedding server.
+
+    Args:
+        config_path: Path to the YAML configuration file
+    """
+    try:
+        # Load configuration
+        config_file = Path(config_path)
+        if not config_file.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+        with open(config_file, 'r') as file:
+            config = yaml.safe_load(file)
+
+        # Extract model configurations
+        embedding_model = config['embedding']['model']
+        reranking_model = config['reranking']['model']
+
+        # Create model manager
+        server_model_manager = ModelManager(
+            embedding_model_name=embedding_model,
+            reranker_model_name=reranking_model
+        )
+
+        # Extract server configuration
+        server_url = config['embedding']['transformers_inference_api']
+
+        # Parse host and port from URL (e.g., 'http://172.20.64.1:5000')
+        if '://' in server_url:
+            host_port = server_url.split('://')[-1]
+        else:
+            host_port = server_url
+
+        if ':' in host_port:
+            host, port_str = host_port.split(':')
+            port = int(port_str)
+        else:
+            host = host_port
+            port = 5000
+
+        print(f"Starting embedding server with:")
+        print(f"  Embedding model: {embedding_model}")
+        print(f"  Reranking model: {reranking_model}")
+        print(f"  Server address: {host}:{port}")
+
+        # Start server (blocking mode when run as main)
+        start_server(
+            configured_model_manager=server_model_manager,
+            host=host,
+            port=port,
+            use_thread=False  # Block the main thread
+        )
+
+    except Exception as e:
+        print(f"Failed to start embedding server: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    """
+    Main entry point when running the embedding service standalone.
+
+    Usage:
+        python src/vectordb/old/embedding_service.py
+
+    Or with custom config:
+        python src/vectordb/old/embedding_service.py --config path/to/config.yaml
+    """
+    import sys
+
+    # Check for custom config path argument
+    config_path = "../../config/benchmark_config.yaml"  # default
+
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--config" and len(sys.argv) > 2:
+            config_path = sys.argv[2]
+        else:
+            config_path = sys.argv[1]
+
+    print("Starting Embedding & Reranking Server...")
+    print(f"Using configuration: {config_path}")
+
+    try:
+        load_config_and_start_server(config_path)
+    except KeyboardInterrupt:
+        print("\nServer stopped by user")
+    except Exception as e:
+        print(f"Server failed: {e}")
+        sys.exit(1)
 
 
