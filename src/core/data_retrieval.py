@@ -1,8 +1,10 @@
-import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 from typing import List
-
+import time
 from src.core.configuration import RAGConfiguration, SearchType, SearchConfiguration
+from src.core.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
 from src.core.data_evaluation import EvaluationService
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
 
@@ -25,97 +27,97 @@ class RetrievalService(ABC):
 
 
 class DocumentRetrievalService(RetrievalService):
-    """
-    Service focused solely on document retrieval operations.
-    Delegates evaluation to EvaluationService (SRP compliance).
-
-    Implements 50-chunk retrieval strategy for comprehensive evaluation:
-    - Always retrieves 50 chunks for ranking metrics (NDCG, MRR)
-    - Uses configured top_k for precision/recall fairness
-    """
 
     def __init__(self, db_manager: WeaviateDBManager):
         self.db_manager = db_manager
+        # Use the new dual-level evaluation service
         self.evaluation_service = EvaluationService()
 
     def retrieve_evaluate(self, config: RAGConfiguration):
-        """
-        Execute retrieval and evaluation pipeline.
-        Uses dependency injection to separate retrieval from evaluation.
-        """
-        print(f"\n🔍 Starting retrieval and evaluation for: {config.collection_name}")
-        print(f"📊 Strategy: Retrieve 50 chunks per query, evaluate with configured top_k")
-        start_time = time.time()
+        """Enhanced retrieve and evaluate method using dual-level evaluation service."""
 
-        # Delegate evaluation to specialized service, injecting retrieval function
+        print(f"⏱️  Starting retrieval/evaluation for '{config.collection_name}'")
+        #start_time = time.time()
+
+        # Use the new evaluation service with injected retrieval function
         self.evaluation_service.evaluate_retrieval_results(
             config=config,
-            retrieval_function=self.retrieve_chunks  # Inject our retrieval method
+            retrieval_function=self._create_retrieval_function()
         )
 
-        # Generate reports through evaluation service
+        # Generate comprehensive reports
         self.evaluation_service.generate_reports(config)
-        # Calculate and display ingestion time
-        retrieval_time = time.time() - start_time
-        print(
-            f"⏱️  Retrieval/Evaluation completed for '{config.collection_name}' in {retrieval_time:.2f} seconds.")
 
-    def retrieve_chunks(self, query: str, collection_name: str, search_config: SearchConfiguration) -> List[dict]:
+        # Clear metrics for next collection (if processing multiple)
+        # Note: Don't clear here if you want to aggregate across collections
+        # self.evaluation_service.clear_metrics()
+
+        # Return summary for programmatic access
+        return self.evaluation_service.get_metrics_summary()
+
+    def _create_retrieval_function(self):
         """
-        Core retrieval logic - always retrieves 50 chunks for comprehensive evaluation.
+        Create a retrieval function that can be injected into the evaluation service.
+        This follows dependency injection pattern for better testability.
+        """
 
-        Strategy:
-        - Always retrieve 50 chunks from database for ranking metrics (NDCG, MRR)
-        - Precision/Recall use only top_k chunks from search_config
-        - This allows better ranking evaluation while respecting configuration limits
+        def retrieval_function(query: str, collection_name: str, search_config: SearchConfiguration) -> List[dict]:
+            """
+            Retrieve function that always fetches 50 chunks for comprehensive evaluation.
+
+            The evaluation service expects:
+            - 50 chunks total for ranking evaluation (NDCG, MRR)
+            - Will use top_k from search_config for precision/recall calculations
+            """
+            return self.retrieve_chunks(query, collection_name, search_config, fixed_k=50)
+
+        return retrieval_function
+
+    def retrieve_chunks(self, query: str, collection_name: str, search_config: SearchConfiguration,
+                        fixed_k: int = 50) -> List[dict]:
+        """
+        Retrieve chunks using different search strategies.
+        Always retrieves fixed_k=50 chunks for comprehensive evaluation.
 
         Args:
             query: Search query string
             collection_name: Name of the collection to search in
-            search_config: Search configuration containing type, top_k, and alpha
+            search_config: Search configuration with type and parameters
+            fixed_k: Fixed number of chunks to retrieve (default 50 for evaluation)
 
         Returns:
-            List of 50 matching chunk properties (or fewer if not available)
+            List of matching chunk properties (always 50 chunks if available)
         """
-        # Always retrieve 50 chunks regardless of configured top_k
-        RANKING_EVALUATION_SIZE = 50
-
         results = []
+
+        # Always retrieve 50 chunks regardless of configured top_k
+        # The evaluation service will use search_config.top_k for precision/recall
+        # but will use all 50 for NDCG and MRR calculations
+        k_to_retrieve = fixed_k
 
         match search_config.search_type:
             case SearchType.SEMANTIC_SEARCH:
-                results = self.db_manager.semantic_search_retrieve(
-                    query, collection_name, RANKING_EVALUATION_SIZE
-                )
+                results = self.db_manager.semantic_search_retrieve(query, collection_name, k_to_retrieve)
 
             case SearchType.KEYWORD_SEARCH:
-                results = self.db_manager.bm25_retrieve(
-                    query, collection_name, RANKING_EVALUATION_SIZE
-                )
+                results = self.db_manager.bm25_retrieve(query, collection_name, k_to_retrieve)
 
             case SearchType.HYBRID_SEARCH:
-                results = self.db_manager.hybrid_search(
-                    query, collection_name, RANKING_EVALUATION_SIZE, search_config.alpha
-                )
+                results = self.db_manager.hybrid_search(query, collection_name, k_to_retrieve, search_config.alpha)
 
             case _:
                 raise ValueError(f"Unsupported search type: {search_config.search_type}")
 
-        # Log retrieval info for debugging
-        if len(results) < RANKING_EVALUATION_SIZE:
-            print(f"⚠️  Retrieved only {len(results)} chunks (expected {RANKING_EVALUATION_SIZE})")
-
         return results
 
-    # Delegate these methods to evaluation service for backward compatibility
-    def clear_metrics(self):
-        """Clear accumulated metrics"""
-        self.evaluation_service.clear_metrics()
+    def get_evaluation_insights(self) -> dict:
+        """Get insights about document vs section level performance differences"""
+        return self.evaluation_service.get_performance_insights()
 
-    def get_metrics_summary(self) -> dict:
-        """Get metrics summary"""
+    def get_current_metrics_summary(self) -> dict:
+        """Get current metrics summary for programmatic access"""
         return self.evaluation_service.get_metrics_summary()
 
-    def get_performance_insights(self) -> dict:
-        """Get performance insights about dual-level evaluation"""
-        return self.evaluation_service.get_performance_insights()
+    def clear_evaluation_metrics(self):
+        """Clear accumulated evaluation metrics"""
+        self.evaluation_service.clear_metrics()

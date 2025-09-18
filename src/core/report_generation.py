@@ -4,6 +4,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")  # Use a headless backend (no Tkinter required)
 import matplotlib.pyplot as plt
 import seaborn as sns
 from openpyxl import Workbook
@@ -100,10 +102,18 @@ class BenchmarkReportGenerator:
             summary_data.append({
                 'configuration_id': config_id,
                 'query_count': avg_metrics['query_count'],
-                'avg_precision': avg_metrics['precision'],
-                'avg_recall': avg_metrics['recall'],
-                'avg_f1_score': avg_metrics['f1_score'],
-                'avg_ndcg': avg_metrics['ndcg']
+                # Document level metrics
+                'avg_document_precision': avg_metrics['document_precision'],
+                'avg_document_recall': avg_metrics['document_recall'],
+                'avg_document_f1_score': avg_metrics['document_f1_score'],
+                'avg_document_ndcg': avg_metrics['document_ndcg'],
+                'avg_document_mrr': avg_metrics['document_mrr'],
+                # Section level metrics
+                'avg_section_precision': avg_metrics['section_precision'],
+                'avg_section_recall': avg_metrics['section_recall'],
+                'avg_section_f1_score': avg_metrics['section_f1_score'],
+                'avg_section_ndcg': avg_metrics['section_ndcg'],
+                'avg_section_mrr': avg_metrics['section_mrr']
             })
 
         summary_csv_file = self.report_dir / f"{report_name}_summary_{self.timestamp}.csv"
@@ -135,25 +145,38 @@ class BenchmarkReportGenerator:
             report_data['detailed_metrics'].append({
                 'query_id': metric.query_id,
                 'query_text': metric.query_text,
-                'precision': metric.precision,
-                'recall': metric.recall,
-                'f1_score': metric.f1_score,
-                'ndcg': metric.ndcg,
+                # Document level
+                'document_precision': metric.document_precision,
+                'document_recall': metric.document_recall,
+                'document_f1_score': metric.document_f1_score,
+                'document_ndcg': metric.document_ndcg,
+                'document_mrr': metric.document_mrr,
+                # Section level
+                'section_precision': metric.section_precision,
+                'section_recall': metric.section_recall,
+                'section_f1_score': metric.section_f1_score,
+                'section_ndcg': metric.section_ndcg,
+                'section_mrr': metric.section_mrr,
+                # General info
                 'search_type': metric.search_type.name,
                 'configuration_id': metric.configuration_id,
                 'ground_truth_count': metric.ground_truth_count,
-                'retrieved_count': metric.retrieved_count,
-                'relevant_retrieved_count': metric.relevant_retrieved_count
+                'retrieved_count_total': metric.retrieved_count_total,
+                'retrieved_count_evaluated': metric.retrieved_count_evaluated,
+                'document_relevant_retrieved_count': metric.document_relevant_retrieved_count,
+                'section_relevant_retrieved_count': metric.section_relevant_retrieved_count
             })
 
-        # Add best configurations for each metric
-        for metric_name in ['precision', 'recall', 'f1_score', 'ndcg']:
-            best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
-            if best_config:
-                report_data['best_configurations'][metric_name] = {
-                    'configuration_id': best_config,
-                    'value': best_value
-                }
+        # Add best configurations for each metric (both levels)
+        for level in ['document', 'section']:
+            for metric_name in ['precision', 'recall', 'f1_score', 'ndcg', 'mrr']:
+                full_metric_name = f'{level}_{metric_name}'
+                best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(full_metric_name)
+                if best_config:
+                    report_data['best_configurations'][full_metric_name] = {
+                        'configuration_id': best_config,
+                        'value': best_value
+                    }
 
         # Save JSON report
         json_file = self.report_dir / f"{report_name}_{self.timestamp}.json"
@@ -331,10 +354,13 @@ class BenchmarkReportGenerator:
                 ws.cell(row=start_row, column=2, value=f"{best_config[:20]}... ({best_value:.4f})")
                 start_row += 1
 
-        # Auto-adjust column widths
+        # Auto-adjust column widths - FIXED VERSION
         column_widths = [18, 12, 10, 12, 10, 12, 10, 12, 10]  # Adjusted for the 5-column structure
         for i, width in enumerate(column_widths, 1):
-            ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = width
+            # Convert column number to letter manually to avoid MergedCell issue
+            from openpyxl.utils import get_column_letter
+            column_letter = get_column_letter(i)
+            ws.column_dimensions[column_letter].width = width
 
     def _create_detailed_metrics_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
         """Create detailed metrics sheet with all query results"""
@@ -357,8 +383,11 @@ class BenchmarkReportGenerator:
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
         # Add conditional formatting for metrics columns
-        metric_columns = ['precision', 'recall', 'f1_score', 'ndcg']
-        for metric in metric_columns:
+        dual_level_metrics = [
+            'document_precision', 'document_recall', 'document_f1_score', 'document_ndcg', 'document_mrr',
+            'section_precision', 'section_recall', 'section_f1_score', 'section_ndcg', 'section_mrr'
+        ]
+        for metric in dual_level_metrics:
             if metric in df.columns:
                 col_idx = df.columns.get_loc(metric) + 1
                 col_letter = ws.cell(row=1, column=col_idx).column_letter
@@ -390,8 +419,9 @@ class BenchmarkReportGenerator:
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
-        # Create data table
-        headers = ['Configuration ID', 'Precision', 'Recall', 'F1-Score', 'NDCG', 'Query Count']
+        # Create data table for document level
+        headers = ['Configuration ID', 'Doc_Precision', 'Doc_Recall', 'Doc_F1', 'Doc_NDCG', 'Sec_Precision',
+                   'Sec_Recall', 'Sec_F1', 'Sec_NDCG', 'Query Count']
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True)
@@ -405,36 +435,39 @@ class BenchmarkReportGenerator:
             config_ids.append(short_id)
 
             ws.cell(row=row, column=1, value=short_id)
-            ws.cell(row=row, column=2, value=round(metrics_data['precision'], 4))
-            ws.cell(row=row, column=3, value=round(metrics_data['recall'], 4))
-            ws.cell(row=row, column=4, value=round(metrics_data['f1_score'], 4))
-            ws.cell(row=row, column=5, value=round(metrics_data['ndcg'], 4))
-            ws.cell(row=row, column=6, value=metrics_data['query_count'])
+            # Document level
+            ws.cell(row=row, column=2, value=round(metrics_data['document_precision'], 4))
+            ws.cell(row=row, column=3, value=round(metrics_data['document_recall'], 4))
+            ws.cell(row=row, column=4, value=round(metrics_data['document_f1_score'], 4))
+            ws.cell(row=row, column=5, value=round(metrics_data['document_ndcg'], 4))
+            # Section level
+            ws.cell(row=row, column=6, value=round(metrics_data['section_precision'], 4))
+            ws.cell(row=row, column=7, value=round(metrics_data['section_recall'], 4))
+            ws.cell(row=row, column=8, value=round(metrics_data['section_f1_score'], 4))
+            ws.cell(row=row, column=9, value=round(metrics_data['section_ndcg'], 4))
+            ws.cell(row=row, column=10, value=metrics_data['query_count'])
 
-        # Create chart
+        # Create chart for document level F1 scores
         if len(config_averages) > 0:
             chart = BarChart()
             chart.type = "col"
             chart.style = 10
-            chart.title = "Configuration Performance Comparison"
-            chart.y_axis.title = 'Score'
+            chart.title = "Configuration Performance Comparison (F1 Scores)"
+            chart.y_axis.title = 'F1 Score'
             chart.x_axis.title = 'Configuration'
 
-            # Add data series for each metric
-            metrics_cols = ['Precision', 'Recall', 'F1-Score', 'NDCG']
-            colors = ['FF6B6B', '4ECDC4', 'FFE66D', '95A5A6']
+            # Add data series for document and section F1
+            doc_f1_values = Reference(ws, min_col=4, min_row=2, max_row=len(config_averages) + 1)
+            sec_f1_values = Reference(ws, min_col=8, min_row=2, max_row=len(config_averages) + 1)
 
-            for i, metric in enumerate(metrics_cols):
-                col_idx = i + 2
-                values = Reference(ws, min_col=col_idx, min_row=2, max_row=len(config_averages) + 1)
-                series = chart.add_data(values, titles_from_data=False)
-                series[0].graphicalProperties.solidFill = colors[i]
+            doc_series = chart.add_data(doc_f1_values, titles_from_data=False)
+            sec_series = chart.add_data(sec_f1_values, titles_from_data=False)
 
             categories = Reference(ws, min_col=1, min_row=2, max_row=len(config_averages) + 1)
             chart.set_categories(categories)
             chart.legend.position = 'b'
 
-            ws.add_chart(chart, "H2")
+            ws.add_chart(chart, "L2")
 
         # Auto-adjust column widths
         for column in ws.columns:
@@ -460,10 +493,16 @@ class BenchmarkReportGenerator:
         for search_type, metrics_list in search_type_metrics.items():
             if metrics_list:
                 search_type_averages[search_type.name] = {
-                    'precision': sum(m.precision for m in metrics_list) / len(metrics_list),
-                    'recall': sum(m.recall for m in metrics_list) / len(metrics_list),
-                    'f1_score': sum(m.f1_score for m in metrics_list) / len(metrics_list),
-                    'ndcg': sum(m.ndcg for m in metrics_list) / len(metrics_list),
+                    # Document level
+                    'document_precision': sum(m.document_precision for m in metrics_list) / len(metrics_list),
+                    'document_recall': sum(m.document_recall for m in metrics_list) / len(metrics_list),
+                    'document_f1_score': sum(m.document_f1_score for m in metrics_list) / len(metrics_list),
+                    'document_ndcg': sum(m.document_ndcg for m in metrics_list) / len(metrics_list),
+                    # Section level
+                    'section_precision': sum(m.section_precision for m in metrics_list) / len(metrics_list),
+                    'section_recall': sum(m.section_recall for m in metrics_list) / len(metrics_list),
+                    'section_f1_score': sum(m.section_f1_score for m in metrics_list) / len(metrics_list),
+                    'section_ndcg': sum(m.section_ndcg for m in metrics_list) / len(metrics_list),
                     'query_count': len(metrics_list)
                 }
 
@@ -472,7 +511,8 @@ class BenchmarkReportGenerator:
             return
 
         # Create headers
-        headers = ['Search Type', 'Precision', 'Recall', 'F1-Score', 'NDCG', 'Query Count']
+        headers = ['Search Type', 'Doc_Precision', 'Doc_Recall', 'Doc_F1', 'Doc_NDCG',
+                   'Sec_Precision', 'Sec_Recall', 'Sec_F1', 'Sec_NDCG', 'Query Count']
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True)
@@ -482,31 +522,17 @@ class BenchmarkReportGenerator:
         # Add search type data
         for row, (search_type, metrics_data) in enumerate(search_type_averages.items(), 2):
             ws.cell(row=row, column=1, value=search_type)
-            ws.cell(row=row, column=2, value=round(metrics_data['precision'], 4))
-            ws.cell(row=row, column=3, value=round(metrics_data['recall'], 4))
-            ws.cell(row=row, column=4, value=round(metrics_data['f1_score'], 4))
-            ws.cell(row=row, column=5, value=round(metrics_data['ndcg'], 4))
-            ws.cell(row=row, column=6, value=metrics_data['query_count'])
-
-        # Create comparison chart
-        if len(search_type_averages) > 1:
-            chart = BarChart()
-            chart.type = "col"
-            chart.style = 12
-            chart.title = "Search Type Performance Comparison"
-            chart.y_axis.title = 'Average Score'
-            chart.x_axis.title = 'Search Type'
-
-            # Add data for metrics
-            for col_idx in range(2, 6):  # Precision, Recall, F1-Score, NDCG
-                values = Reference(ws, min_col=col_idx, min_row=2, max_row=len(search_type_averages) + 1)
-                chart.add_data(values, titles_from_data=False)
-
-            categories = Reference(ws, min_col=1, min_row=2, max_row=len(search_type_averages) + 1)
-            chart.set_categories(categories)
-            chart.legend.position = 'r'
-
-            ws.add_chart(chart, "H2")
+            # Document level
+            ws.cell(row=row, column=2, value=round(metrics_data['document_precision'], 4))
+            ws.cell(row=row, column=3, value=round(metrics_data['document_recall'], 4))
+            ws.cell(row=row, column=4, value=round(metrics_data['document_f1_score'], 4))
+            ws.cell(row=row, column=5, value=round(metrics_data['document_ndcg'], 4))
+            # Section level
+            ws.cell(row=row, column=6, value=round(metrics_data['section_precision'], 4))
+            ws.cell(row=row, column=7, value=round(metrics_data['section_recall'], 4))
+            ws.cell(row=row, column=8, value=round(metrics_data['section_f1_score'], 4))
+            ws.cell(row=row, column=9, value=round(metrics_data['section_ndcg'], 4))
+            ws.cell(row=row, column=10, value=metrics_data['query_count'])
 
         # Auto-adjust column widths
         for column in ws.columns:
@@ -532,20 +558,33 @@ class BenchmarkReportGenerator:
             return
 
         # Group by query and calculate statistics
-        query_stats = df.groupby('query_id').agg({
-            'precision': ['mean', 'std', 'max', 'min'],
-            'recall': ['mean', 'std', 'max', 'min'],
-            'f1_score': ['mean', 'std', 'max', 'min'],
-            'ndcg': ['mean', 'std', 'max', 'min'],
-            'configuration_id': 'count'
-        }).round(4)
+        dual_level_metrics = [
+            'document_precision', 'document_recall', 'document_f1_score', 'document_ndcg',
+            'section_precision', 'section_recall', 'section_f1_score', 'section_ndcg'
+        ]
 
-        # Flatten column names
+        query_stats = df.groupby('query_id')[dual_level_metrics].agg(['mean', 'std', 'max', 'min']).round(4)
+
+        # 🔹 Flatten MultiIndex columns BEFORE merging
         query_stats.columns = ['_'.join(col).strip() for col in query_stats.columns.values]
-        query_stats = query_stats.rename(columns={'configuration_id_count': 'config_count'})
 
-        # Reset index to make query_id a column
+        # Reset index
         query_stats = query_stats.reset_index()
+
+        # Config counts (single-level columns already)
+        config_counts = df.groupby('query_id')['configuration_id'].count().reset_index(name='config_count')
+
+        # Safe merge now
+        query_stats = query_stats.merge(config_counts, on='query_id', how='left')
+
+        # Flatten column names for MultiIndex columns
+        new_columns = []
+        for col in query_stats.columns:
+            if isinstance(col, tuple):
+                new_columns.append('_'.join(col).strip())
+            else:
+                new_columns.append(col)
+        query_stats.columns = new_columns
 
         # Write headers
         headers = list(query_stats.columns)
@@ -583,11 +622,14 @@ class BenchmarkReportGenerator:
             ws['A1'] = "No configuration data available"
             return
 
-        # Create rankings for each metric
-        metrics = ['precision', 'recall', 'f1_score', 'ndcg']
+        # Create rankings for each dual-level metric
+        dual_level_metrics = [
+            'document_precision', 'document_recall', 'document_f1_score', 'document_ndcg',
+            'section_precision', 'section_recall', 'section_f1_score', 'section_ndcg'
+        ]
         start_row = 1
 
-        for metric in metrics:
+        for metric in dual_level_metrics:
             # Sort configurations by metric
             sorted_configs = sorted(
                 config_averages.items(),
@@ -656,10 +698,10 @@ class BenchmarkReportGenerator:
         plt.style.use('seaborn-v0_8' if 'seaborn-v0_8' in plt.style.available else 'default')
 
         # Generate different types of plots
-        self._plot_metrics_by_configuration(metrics_aggregator, plots_dir)
-        self._plot_metrics_by_search_type(metrics_aggregator, plots_dir)
-        self._plot_metrics_distribution(metrics_aggregator, plots_dir)
-        self._plot_configuration_comparison(metrics_aggregator, plots_dir)
+        self._plot_dual_level_metrics_by_configuration(metrics_aggregator, plots_dir)
+        self._plot_dual_level_metrics_by_search_type(metrics_aggregator, plots_dir)
+        self._plot_dual_level_metrics_distribution(metrics_aggregator, plots_dir)
+        self._plot_dual_level_configuration_comparison(metrics_aggregator, plots_dir)
 
         return plots_dir
 
@@ -674,7 +716,7 @@ class BenchmarkReportGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG Benchmark Report</title>
+    <title>RAG Benchmark Report - Dual Level Evaluation</title>
     <style>
         body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
         .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
@@ -683,18 +725,23 @@ class BenchmarkReportGenerator:
         .metrics-table th {{ background-color: #f2f2f2; }}
         .best-config {{ background-color: #e7f3ff; }}
         .section {{ margin: 30px 0; }}
+        .dual-level {{ background-color: #f9f9f9; }}
+        .document-level {{ background-color: #e8f5e8; }}
+        .section-level {{ background-color: #ffe8e8; }}
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>RAG Benchmark Report</h1>
+        <h1>RAG Benchmark Report - Dual Level Evaluation</h1>
         <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         <p>Total Queries: {len(metrics_aggregator.metrics)}</p>
         <p>Total Configurations: {len(config_averages)}</p>
+        <p><strong>Evaluation Strategy:</strong> Document-level (filename match) and Section-level (exact section match)</p>
     </div>
 
     <div class="section">
-        <h2>Configuration Performance Summary</h2>
+        <h2>Configuration Performance Summary - Document Level</h2>
+        <p>Document-level metrics consider a chunk relevant if it comes from the correct filename.</p>
         <table class="metrics-table">
             <thead>
                 <tr>
@@ -704,21 +751,60 @@ class BenchmarkReportGenerator:
                     <th>Recall</th>
                     <th>F1-Score</th>
                     <th>NDCG</th>
+                    <th>MRR</th>
                 </tr>
             </thead>
             <tbody>
         """
 
-        # Add configuration data
+        # Add document-level configuration data
         for config_id, metrics in config_averages.items():
             html += f"""
-                <tr>
+                <tr class="document-level">
                     <td>{config_id[:12]}...</td>
                     <td>{metrics['query_count']}</td>
-                    <td>{metrics['precision']:.4f}</td>
-                    <td>{metrics['recall']:.4f}</td>
-                    <td>{metrics['f1_score']:.4f}</td>
-                    <td>{metrics['ndcg']:.4f}</td>
+                    <td>{metrics['document_precision']:.4f}</td>
+                    <td>{metrics['document_recall']:.4f}</td>
+                    <td>{metrics['document_f1_score']:.4f}</td>
+                    <td>{metrics['document_ndcg']:.4f}</td>
+                    <td>{metrics['document_mrr']:.4f}</td>
+                </tr>
+            """
+
+        html += """
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Configuration Performance Summary - Section Level</h2>
+        <p>Section-level metrics require exact chapter/section/subsection match for relevance.</p>
+        <table class="metrics-table">
+            <thead>
+                <tr>
+                    <th>Configuration ID</th>
+                    <th>Queries</th>
+                    <th>Precision</th>
+                    <th>Recall</th>
+                    <th>F1-Score</th>
+                    <th>NDCG</th>
+                    <th>MRR</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+
+        # Add section-level configuration data
+        for config_id, metrics in config_averages.items():
+            html += f"""
+                <tr class="section-level">
+                    <td>{config_id[:12]}...</td>
+                    <td>{metrics['query_count']}</td>
+                    <td>{metrics['section_precision']:.4f}</td>
+                    <td>{metrics['section_recall']:.4f}</td>
+                    <td>{metrics['section_f1_score']:.4f}</td>
+                    <td>{metrics['section_ndcg']:.4f}</td>
+                    <td>{metrics['section_mrr']:.4f}</td>
                 </tr>
             """
 
@@ -729,12 +815,23 @@ class BenchmarkReportGenerator:
 
     <div class="section">
         <h2>Best Configurations by Metric</h2>
+        <h3>Document Level Champions</h3>
         """
 
-        for metric_name in ['precision', 'recall', 'f1_score', 'ndcg']:
+        for metric_name in ['document_precision', 'document_recall', 'document_f1_score', 'document_ndcg',
+                            'document_mrr']:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
-                html += f"<p><strong>Best {metric_name.replace('_', ' ').title()}:</strong> {best_config[:12]}... ({best_value:.4f})</p>"
+                display_name = metric_name.replace('document_', '').replace('_', ' ').title()
+                html += f"<p><strong>Best {display_name}:</strong> {best_config[:12]}... ({best_value:.4f})</p>"
+
+        html += "<h3>Section Level Champions</h3>"
+
+        for metric_name in ['section_precision', 'section_recall', 'section_f1_score', 'section_ndcg', 'section_mrr']:
+            best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
+            if best_config:
+                display_name = metric_name.replace('section_', '').replace('_', ' ').title()
+                html += f"<p><strong>Best {display_name}:</strong> {best_config[:12]}... ({best_value:.4f})</p>"
 
         html += """
     </div>
@@ -745,11 +842,11 @@ class BenchmarkReportGenerator:
         return html
 
     def _generate_markdown_content(self, metrics_aggregator: MetricsAggregator) -> str:
-        """Generate Markdown content for the report"""
+        """Generate Markdown content for the dual-level report"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
-        md_content = f"""# RAG Benchmark Report
+        md_content = f"""# RAG Benchmark Report - Dual Level Evaluation
 
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
 **Total Queries:** {len(metrics_aggregator.metrics)}  
@@ -757,35 +854,62 @@ class BenchmarkReportGenerator:
 
 ## Executive Summary
 
-This report presents the results of benchmarking different RAG (Retrieval-Augmented Generation) configurations across various metrics including Precision, Recall, F1-Score, and NDCG.
+This report presents the results of benchmarking different RAG configurations using dual-level evaluation:
+- **Document Level:** Chunks are relevant if they come from the correct filename
+- **Section Level:** Chunks are relevant only if they match the exact chapter/section/subsection
 
-## Configuration Performance
+## Document Level Performance
 
-| Configuration ID | Queries | Precision | Recall | F1-Score | NDCG |
-|------------------|---------|-----------|--------|----------|------|
+| Configuration ID | Queries | Precision | Recall | F1-Score | NDCG | MRR |
+|------------------|---------|-----------|--------|----------|------|-----|
 """
 
         for config_id, metrics in config_averages.items():
-            md_content += f"| {config_id[:20]}... | {metrics['query_count']} | {metrics['precision']:.4f} | {metrics['recall']:.4f} | {metrics['f1_score']:.4f} | {metrics['ndcg']:.4f} |\n"
+            md_content += f"| {config_id[:20]}... | {metrics['query_count']} | {metrics['document_precision']:.4f} | {metrics['document_recall']:.4f} | {metrics['document_f1_score']:.4f} | {metrics['document_ndcg']:.4f} | {metrics['document_mrr']:.4f} |\n"
 
-        md_content += "\n## Best Configurations by Metric\n\n"
+        md_content += "\n## Section Level Performance\n\n"
+        md_content += "| Configuration ID | Queries | Precision | Recall | F1-Score | NDCG | MRR |\n"
+        md_content += "|------------------|---------|-----------|--------|----------|------|-----|\n"
 
-        for metric_name in ['precision', 'recall', 'f1_score', 'ndcg']:
+        for config_id, metrics in config_averages.items():
+            md_content += f"| {config_id[:20]}... | {metrics['query_count']} | {metrics['section_precision']:.4f} | {metrics['section_recall']:.4f} | {metrics['section_f1_score']:.4f} | {metrics['section_ndcg']:.4f} | {metrics['section_mrr']:.4f} |\n"
+
+        md_content += "\n## Best Configurations by Metric\n\n### Document Level Champions\n\n"
+
+        for metric_name in ['document_precision', 'document_recall', 'document_f1_score', 'document_ndcg',
+                            'document_mrr']:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
-                md_content += f"- **Best {metric_name.replace('_', ' ').title()}:** {best_config} ({best_value:.4f})\n"
+                display_name = metric_name.replace('document_', '').replace('_', ' ').title()
+                md_content += f"- **Best {display_name}:** {best_config} ({best_value:.4f})\n"
+
+        md_content += "\n### Section Level Champions\n\n"
+
+        for metric_name in ['section_precision', 'section_recall', 'section_f1_score', 'section_ndcg', 'section_mrr']:
+            best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
+            if best_config:
+                display_name = metric_name.replace('section_', '').replace('_', ' ').title()
+                md_content += f"- **Best {display_name}:** {best_config} ({best_value:.4f})\n"
 
         md_content += "\n## Methodology\n\n"
-        md_content += "The benchmark evaluated RAG configurations using the following metrics:\n\n"
-        md_content += "- **Precision:** Fraction of retrieved documents that are relevant\n"
-        md_content += "- **Recall:** Fraction of relevant documents that are retrieved\n"
-        md_content += "- **F1-Score:** Harmonic mean of precision and recall\n"
-        md_content += "- **NDCG:** Normalized Discounted Cumulative Gain, considering ranking quality\n"
+        md_content += "The benchmark evaluated RAG configurations using dual-level metrics:\n\n"
+        md_content += "### Document Level Metrics\n"
+        md_content += "- **Precision:** Fraction of retrieved chunks from correct documents\n"
+        md_content += "- **Recall:** Fraction of relevant documents that had chunks retrieved\n"
+        md_content += "- **F1-Score:** Harmonic mean of document-level precision and recall\n"
+        md_content += "- **NDCG:** Ranking quality considering document-level relevance\n"
+        md_content += "- **MRR:** Reciprocal rank of first document-level relevant result\n\n"
+        md_content += "### Section Level Metrics\n"
+        md_content += "- **Precision:** Fraction of retrieved chunks from exact section matches\n"
+        md_content += "- **Recall:** Fraction of relevant sections that had chunks retrieved\n"
+        md_content += "- **F1-Score:** Harmonic mean of section-level precision and recall\n"
+        md_content += "- **NDCG:** Ranking quality considering section-level relevance\n"
+        md_content += "- **MRR:** Reciprocal rank of first section-level relevant result\n"
 
         return md_content
 
-    def _plot_metrics_by_configuration(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
-        """Plot metrics comparison by configuration"""
+    def _plot_dual_level_metrics_by_configuration(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
+        """Plot dual-level metrics comparison by configuration"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
@@ -795,133 +919,184 @@ This report presents the results of benchmarking different RAG (Retrieval-Augmen
         configs = list(config_averages.keys())
         config_labels = [f"Config {i + 1}" for i in range(len(configs))]
 
-        metrics = ['precision', 'recall', 'f1_score', 'ndcg']
-        metric_data = {metric: [config_averages[config][metric] for config in configs]
-                       for metric in metrics}
+        dual_level_metrics = ['precision', 'recall', 'f1_score', 'ndcg']
 
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Metrics by Configuration', fontsize=16)
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('Dual Level Metrics by Configuration', fontsize=16)
 
-        for i, metric in enumerate(metrics):
+        for i, base_metric in enumerate(dual_level_metrics):
             ax = axes[i // 2, i % 2]
-            bars = ax.bar(config_labels, metric_data[metric])
-            ax.set_title(f'{metric.replace("_", " ").title()}')
-            ax.set_ylabel('Score')
-            ax.tick_params(axis='x', rotation=45)
 
-            # Highlight best configuration
-            best_idx = metric_data[metric].index(max(metric_data[metric]))
-            bars[best_idx].set_color('orange')
+            # Get document and section level data
+            doc_metric = f'document_{base_metric}'
+            sec_metric = f'section_{base_metric}'
+
+            doc_data = [config_averages[config][doc_metric] for config in configs]
+            sec_data = [config_averages[config][sec_metric] for config in configs]
+
+            x = range(len(config_labels))
+            width = 0.35
+
+            bars1 = ax.bar([i - width / 2 for i in x], doc_data, width, label='Document Level', alpha=0.8)
+            bars2 = ax.bar([i + width / 2 for i in x], sec_data, width, label='Section Level', alpha=0.8)
+
+            ax.set_title(f'{base_metric.replace("_", " ").title()}')
+            ax.set_ylabel('Score')
+            ax.set_xlabel('Configuration')
+            ax.set_xticks(x)
+            ax.set_xticklabels(config_labels, rotation=45)
+            ax.legend()
+
+            # Highlight best configurations
+            best_doc_idx = doc_data.index(max(doc_data))
+            best_sec_idx = sec_data.index(max(sec_data))
+            bars1[best_doc_idx].set_color('orange')
+            bars2[best_sec_idx].set_color('red')
 
         plt.tight_layout()
-        plt.savefig(plots_dir / 'metrics_by_configuration.png', dpi=300, bbox_inches='tight')
+        plt.savefig(plots_dir / 'dual_level_metrics_by_configuration.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-    def _plot_metrics_by_search_type(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
-        """Plot metrics comparison by search type"""
+    def _plot_dual_level_metrics_by_search_type(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
+        """Plot dual-level metrics comparison by search type"""
 
         search_type_metrics = metrics_aggregator.get_metrics_by_search_type()
 
         if not search_type_metrics:
             return
 
-        # Calculate averages by search type
+        # Calculate averages by search type for dual-level metrics
         search_type_averages = {}
         for search_type, metrics_list in search_type_metrics.items():
             if metrics_list:
                 search_type_averages[search_type.name] = {
-                    'precision': sum(m.precision for m in metrics_list) / len(metrics_list),
-                    'recall': sum(m.recall for m in metrics_list) / len(metrics_list),
-                    'f1_score': sum(m.f1_score for m in metrics_list) / len(metrics_list),
-                    'ndcg': sum(m.ndcg for m in metrics_list) / len(metrics_list)
+                    'document_precision': sum(m.document_precision for m in metrics_list) / len(metrics_list),
+                    'document_recall': sum(m.document_recall for m in metrics_list) / len(metrics_list),
+                    'document_f1_score': sum(m.document_f1_score for m in metrics_list) / len(metrics_list),
+                    'document_ndcg': sum(m.document_ndcg for m in metrics_list) / len(metrics_list),
+                    'section_precision': sum(m.section_precision for m in metrics_list) / len(metrics_list),
+                    'section_recall': sum(m.section_recall for m in metrics_list) / len(metrics_list),
+                    'section_f1_score': sum(m.section_f1_score for m in metrics_list) / len(metrics_list),
+                    'section_ndcg': sum(m.section_ndcg for m in metrics_list) / len(metrics_list)
                 }
 
         if not search_type_averages:
             return
 
         search_types = list(search_type_averages.keys())
-        metrics = ['precision', 'recall', 'f1_score', 'ndcg']
+        base_metrics = ['precision', 'recall', 'f1_score', 'ndcg']
 
-        x = range(len(search_types))
-        width = 0.2
+        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+        fig.suptitle('Dual Level Metrics by Search Type', fontsize=16)
 
-        fig, ax = plt.subplots(figsize=(12, 6))
+        for i, base_metric in enumerate(base_metrics):
+            ax = axes[i // 2, i % 2]
 
-        for i, metric in enumerate(metrics):
-            values = [search_type_averages[st][metric] for st in search_types]
-            ax.bar([pos + i * width for pos in x], values, width,
-                   label=metric.replace('_', ' ').title())
+            doc_values = [search_type_averages[st][f'document_{base_metric}'] for st in search_types]
+            sec_values = [search_type_averages[st][f'section_{base_metric}'] for st in search_types]
 
-        ax.set_xlabel('Search Type')
-        ax.set_ylabel('Score')
-        ax.set_title('Metrics by Search Type')
-        ax.set_xticks([pos + width * 1.5 for pos in x])
-        ax.set_xticklabels(search_types)
-        ax.legend()
+            x = range(len(search_types))
+            width = 0.35
+
+            ax.bar([pos - width / 2 for pos in x], doc_values, width, label='Document Level', alpha=0.8)
+            ax.bar([pos + width / 2 for pos in x], sec_values, width, label='Section Level', alpha=0.8)
+
+            ax.set_xlabel('Search Type')
+            ax.set_ylabel('Score')
+            ax.set_title(f'{base_metric.replace("_", " ").title()}')
+            ax.set_xticks(x)
+            ax.set_xticklabels(search_types)
+            ax.legend()
 
         plt.tight_layout()
-        plt.savefig(plots_dir / 'metrics_by_search_type.png', dpi=300, bbox_inches='tight')
+        plt.savefig(plots_dir / 'dual_level_metrics_by_search_type.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-    def _plot_metrics_distribution(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
-        """Plot distribution of metrics values"""
+    def _plot_dual_level_metrics_distribution(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
+        """Plot distribution of dual-level metrics values"""
 
         df = metrics_aggregator.to_dataframe()
 
         if df.empty:
             return
 
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        fig.suptitle('Distribution of Metrics', fontsize=16)
+        fig, axes = plt.subplots(4, 2, figsize=(15, 20))
+        fig.suptitle('Distribution of Dual Level Metrics', fontsize=16)
 
-        metrics = ['precision', 'recall', 'f1_score', 'ndcg']
+        base_metrics = ['precision', 'recall', 'f1_score', 'ndcg']
 
-        for i, metric in enumerate(metrics):
-            ax = axes[i // 2, i % 2]
-            ax.hist(df[metric], bins=20, alpha=0.7, edgecolor='black')
-            ax.set_title(f'{metric.replace("_", " ").title()} Distribution')
-            ax.set_xlabel('Score')
-            ax.set_ylabel('Frequency')
+        for i, base_metric in enumerate(base_metrics):
+            # Document level distribution
+            ax_doc = axes[i, 0]
+            doc_metric = f'document_{base_metric}'
+            ax_doc.hist(df[doc_metric], bins=20, alpha=0.7, edgecolor='black', color='green')
+            ax_doc.set_title(f'Document {base_metric.replace("_", " ").title()} Distribution')
+            ax_doc.set_xlabel('Score')
+            ax_doc.set_ylabel('Frequency')
+
+            # Section level distribution
+            ax_sec = axes[i, 1]
+            sec_metric = f'section_{base_metric}'
+            ax_sec.hist(df[sec_metric], bins=20, alpha=0.7, edgecolor='black', color='red')
+            ax_sec.set_title(f'Section {base_metric.replace("_", " ").title()} Distribution')
+            ax_sec.set_xlabel('Score')
+            ax_sec.set_ylabel('Frequency')
 
         plt.tight_layout()
-        plt.savefig(plots_dir / 'metrics_distribution.png', dpi=300, bbox_inches='tight')
+        plt.savefig(plots_dir / 'dual_level_metrics_distribution.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-    def _plot_configuration_comparison(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
-        """Plot radar chart comparing top configurations"""
+    def _plot_dual_level_configuration_comparison(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
+        """Plot radar chart comparing top configurations for both levels"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
         if len(config_averages) < 2:
             return
 
-        # Get top 3 configurations by F1-score
+        # Get top 3 configurations by document F1-score
         top_configs = sorted(config_averages.items(),
-                             key=lambda x: x[1]['f1_score'], reverse=True)[:3]
+                             key=lambda x: x[1]['document_f1_score'], reverse=True)[:3]
 
-        metrics = ['precision', 'recall', 'f1_score', 'ndcg']
+        base_metrics = ['precision', 'recall', 'f1_score', 'ndcg']
 
-        fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(projection='polar'))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), subplot_kw=dict(projection='polar'))
 
-        angles = [n / len(metrics) * 2 * 3.14159 for n in range(len(metrics))]
+        angles = [n / len(base_metrics) * 2 * 3.14159 for n in range(len(base_metrics))]
         angles += angles[:1]  # Complete the circle
 
         colors = ['red', 'blue', 'green']
 
+        # Document level radar
         for i, (config_id, config_metrics) in enumerate(top_configs):
-            values = [config_metrics[metric] for metric in metrics]
-            values += values[:1]  # Complete the circle
+            doc_values = [config_metrics[f'document_{metric}'] for metric in base_metrics]
+            doc_values += doc_values[:1]  # Complete the circle
 
-            ax.plot(angles, values, 'o-', linewidth=2,
-                    label=f'Config {i + 1}', color=colors[i])
-            ax.fill(angles, values, alpha=0.25, color=colors[i])
+            ax1.plot(angles, doc_values, 'o-', linewidth=2,
+                     label=f'Config {i + 1}', color=colors[i])
+            ax1.fill(angles, doc_values, alpha=0.25, color=colors[i])
 
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels([m.replace('_', ' ').title() for m in metrics])
-        ax.set_ylim(0, 1)
-        ax.set_title('Top 3 Configurations Comparison', size=16, y=1.1)
-        ax.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
+        ax1.set_xticks(angles[:-1])
+        ax1.set_xticklabels([m.replace('_', ' ').title() for m in base_metrics])
+        ax1.set_ylim(0, 1)
+        ax1.set_title('Top 3 Configurations - Document Level', size=16, y=1.1)
+        ax1.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
+
+        # Section level radar
+        for i, (config_id, config_metrics) in enumerate(top_configs):
+            sec_values = [config_metrics[f'section_{metric}'] for metric in base_metrics]
+            sec_values += sec_values[:1]  # Complete the circle
+
+            ax2.plot(angles, sec_values, 'o-', linewidth=2,
+                     label=f'Config {i + 1}', color=colors[i])
+            ax2.fill(angles, sec_values, alpha=0.25, color=colors[i])
+
+        ax2.set_xticks(angles[:-1])
+        ax2.set_xticklabels([m.replace('_', ' ').title() for m in base_metrics])
+        ax2.set_ylim(0, 1)
+        ax2.set_title('Top 3 Configurations - Section Level', size=16, y=1.1)
+        ax2.legend(loc='upper right', bbox_to_anchor=(1.2, 1.0))
 
         plt.tight_layout()
-        plt.savefig(plots_dir / 'configuration_comparison_radar.png', dpi=300, bbox_inches='tight')
+        plt.savefig(plots_dir / 'dual_level_configuration_comparison_radar.png', dpi=300, bbox_inches='tight')
         plt.close()

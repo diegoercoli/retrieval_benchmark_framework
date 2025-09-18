@@ -320,8 +320,6 @@ class RetrievalMetricsCalculator:
         return generate_id_from_strings(
             str(search_type),
             rag_config.collection_name,
-            rag_config.chunking.name,
-            rag_config.collection_name
         )
 
 

@@ -11,12 +11,9 @@ from src.core.model_manager import ModelManager
 from src.core.data_ingestion import DocumentIngestionService
 from src.core.data_retrieval import DocumentRetrievalService
 from src.utils.docling_utils import MDTableSerializerProvider
-from src.utils.file_manager import sanitize_collection_name
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
 from src.chunking.CustomChunker import CustomChunker
 from src.vectordb.embedding_service import start_server
-
-
 
 
 class BenchmarkFactory:
@@ -54,8 +51,8 @@ class BenchmarkFactory:
         """Main entry point to start the benchmarking process"""
         print("Starting RAG benchmark factory...")
 
-        # Step 1: Bootstrap embedding server
-        #if not self._bootstrap_embedding_server():
+        # Step 1: Bootstrap embedding server (commented out as per original)
+        # if not self._bootstrap_embedding_server():
         #    raise RuntimeError("Failed to start embedding server")
 
         # Step 2: Create database manager
@@ -146,11 +143,11 @@ class BenchmarkFactory:
 
             # Generate unique collection name
             strategy_name = chunk_strategy['name']
-            #collection_base_name = self.config['vector_database']['collection_name_suffix']
-            raw_collection_name  = f"{strategy_name}-chunking_{embedding_model_name.split('/')[-1]}"
+            collection_base_name = self.config['vector_database']['collection_name_suffix']
 
-            # Sanitize the collection name for Weaviate
-            collection_name = sanitize_collection_name(raw_collection_name)
+            # Create a cleaner collection name for the dual-level system
+            embedding_short_name = embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
+            collection_name = f"{strategy_name}chunking{embedding_short_name}"
 
             # Create RAG configuration
             rag_config = RAGConfiguration(
@@ -166,7 +163,7 @@ class BenchmarkFactory:
 
         return configurations
 
-    def _create_chunker(self, chunk_strategy: dict, embedding_model:str) -> CustomChunker:
+    def _create_chunker(self, chunk_strategy: dict, embedding_model: str) -> CustomChunker:
         """Create chunker based on strategy configuration"""
         strategy_name = chunk_strategy['name']
         blacklist_chapters = self.config['chunking'].get('blacklist_chapters', [])
@@ -205,7 +202,6 @@ class BenchmarkFactory:
                 # Note: overlap logic would need to be implemented in CustomChunker
             )
         '''
-
 
     def _create_search_configurations(self, search_strategies: list) -> list:
         """Convert search strategy configs to SearchConfiguration objects"""
@@ -286,28 +282,52 @@ class BenchmarkFactory:
         """
         Execute the complete pipeline for a single RAG configuration:
         1. Document ingestion (chunking and vector storage)
-        2. Document retrieval and evaluation
+        2. Document retrieval and evaluation with dual-level metrics
         """
         try:
             print(f"Starting pipeline for {rag_config.collection_name}")
 
             # Step 1: Execute Document Ingestion Service
             print(f"Starting document ingestion for {rag_config.collection_name}")
+            ingestion_start = time.time()
             ingestion_service = DocumentIngestionService(db_manager)
 
             # Process documents and store in vector database
             processed_count = ingestion_service.process(rag_config)
-            print(f"Ingested {processed_count} chunks for {rag_config.collection_name}")
+            ingestion_time = time.time() - ingestion_start
+            print(f"Ingested {processed_count} chunks for {rag_config.collection_name} in {ingestion_time:.2f} seconds")
 
-            # Step 2: Execute Document Retrieval Service
-            print(f"Starting evaluation for {rag_config.collection_name}")
+            # Step 2: Execute Document Retrieval Service with Dual-Level Evaluation
+            print(f"Starting dual-level evaluation for {rag_config.collection_name}")
+            retrieval_start = time.time()
             retrieval_service = DocumentRetrievalService(db_manager)
 
-            # Run evaluation against ground truth
-            retrieval_service.retrieve_evaluate(rag_config)
+            # Run dual-level evaluation against ground truth
+            # This now includes both document-level and section-level metrics
+            evaluation_summary = retrieval_service.retrieve_evaluate(rag_config)
+            retrieval_time = time.time() - retrieval_start
+            print(f"Dual-level evaluation completed for {rag_config.collection_name} in {retrieval_time:.2f} seconds")
+
+            # Print summary of evaluation results
+            if evaluation_summary:
+                print(f"Evaluation Summary for {rag_config.collection_name}:")
+                print(f"  Total queries evaluated: {evaluation_summary.get('total_queries', 0)}")
+
+                best_configs = evaluation_summary.get('best_configurations', {})
+                if best_configs:
+                    print("  Best performers:")
+                    for level in ['document', 'section']:
+                        print(f"    {level.title()} Level:")
+                        for metric in ['precision', 'recall', 'f1_score', 'ndcg']:
+                            key = f'{level}_{metric}'
+                            if key in best_configs and best_configs[key]:
+                                config_id, value = best_configs[key]
+                                print(f"      Best {metric}: {value:.4f}")
 
             print(f"Pipeline completed for {rag_config.collection_name}")
 
         except Exception as e:
             print(f"Pipeline failed for {rag_config.collection_name}: {e}")
+            import traceback
+            traceback.print_exc()
             raise

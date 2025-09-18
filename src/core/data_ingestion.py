@@ -45,7 +45,7 @@ class DocumentIngestionService(IngestionService):
         # Your business logic here:
         # 1. Read files from filesystem based on source
         # Start timer
-        start_time = time.time()
+        #start_time = time.time()
         json_docxs = scan_folder(config.main_folder, ".json")
         chunker = config.chunking
         all_chunks = []
@@ -64,9 +64,8 @@ class DocumentIngestionService(IngestionService):
         # Create collection with all chunks at once
         if all_chunks:
             self.db_manager.create_collection(config.collection_name, all_chunks, overwrite=True)
-        ingestion_time = time.time() - start_time
-        print(
-            f"⏱️  Ingestion completed for '{config.collection_name}' in {ingestion_time:.2f} seconds ({len(all_chunks)} chunks)")
+        #ingestion_time = time.time() - start_time
+       # print(            f"⏱️  Ingestion completed for '{config.collection_name}' in {ingestion_time:.2f} seconds ({len(all_chunks)} chunks)")
         return len(all_chunks)
 
     def store_chunks(self, chunks: List[CustomChunk] ,filepath: Path):
