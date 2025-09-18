@@ -93,3 +93,28 @@ def sanitize_filename(name: str, replacement: str = "_") -> str:
     return sanitized.strip()
 
 
+def sanitize_collection_name( name: str) -> str:
+    """
+    Sanitize collection name to meet Weaviate's requirements.
+
+    Weaviate class names must:
+    - Start with a capital letter
+    - Only contain alphanumeric characters
+    - No special characters, hyphens, or underscores
+    """
+    # Remove special characters and replace with empty string
+    sanitized = re.sub(r'[^a-zA-Z0-9]', '', name)
+
+    # Ensure it starts with a capital letter
+    if sanitized and not sanitized[0].isupper():
+        sanitized = sanitized[0].upper() + sanitized[1:]
+
+    # If empty after sanitization, provide a default
+    if not sanitized:
+        sanitized = "DefaultCollection"
+
+    # Ensure it's not too long (Weaviate has limits)
+    if len(sanitized) > 50:
+        sanitized = sanitized[:50]
+
+    return sanitized

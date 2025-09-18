@@ -11,6 +11,7 @@ from src.core.model_manager import ModelManager
 from src.core.data_ingestion import DocumentIngestionService
 from src.core.data_retrieval import DocumentRetrievalService
 from src.utils.docling_utils import MDTableSerializerProvider
+from src.utils.file_manager import sanitize_collection_name
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
 from src.chunking.CustomChunker import CustomChunker
 from src.vectordb.embedding_service import start_server
@@ -127,7 +128,8 @@ class BenchmarkFactory:
 
         # Create evaluation configuration
         eval_config = EvaluationConfiguration(
-            dataset_path=Path(self.config['evaluation']['dataset_path']).resolve()
+            dataset_path=Path(self.config['evaluation']['dataset_path']).resolve(),
+            report_path=Path(self.config['evaluation']['report_path']).resolve()
         )
 
         # Get chunking strategies
@@ -144,8 +146,11 @@ class BenchmarkFactory:
 
             # Generate unique collection name
             strategy_name = chunk_strategy['name']
-            collection_base_name = self.config['vector_database']['collection_name_suffix']
-            collection_name = f"{strategy_name}-chunking_{embedding_model_name.split('/')[-1]}"
+            #collection_base_name = self.config['vector_database']['collection_name_suffix']
+            raw_collection_name  = f"{strategy_name}-chunking_{embedding_model_name.split('/')[-1]}"
+
+            # Sanitize the collection name for Weaviate
+            collection_name = sanitize_collection_name(raw_collection_name)
 
             # Create RAG configuration
             rag_config = RAGConfiguration(

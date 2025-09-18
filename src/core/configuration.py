@@ -22,6 +22,7 @@ class SearchConfiguration:
 @dataclass
 class EvaluationConfiguration:
     dataset_path: Path
+    report_path: Path
 
 @dataclass
 class RAGConfiguration:

@@ -13,6 +13,7 @@ from src.chunking.CustomChunk import CustomChunk
 class WeaviateDBManager:
 
     def __init__(self, port: int, grpc_port: int, inference_url: str):
+        print(f"##############INFERENCE_URL: {inference_url}")
         self.port = port
         self.grpc_port = grpc_port
         self.inference_url = inference_url
