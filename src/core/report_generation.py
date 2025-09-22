@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")  # Use a headless backend (no Tkinter required)
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -19,7 +20,7 @@ from src.core.configuration import SearchType
 
 
 class BenchmarkReportGenerator:
-    """Generate comprehensive benchmark reports in various formats"""
+    """Generate comprehensive benchmark reports in various formats with configuration mapping"""
 
     def __init__(self, report_dir: Path = Path("report")):
         """
@@ -31,6 +32,73 @@ class BenchmarkReportGenerator:
         self.report_dir = Path(report_dir)
         self.report_dir.mkdir(parents=True, exist_ok=True)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Store configuration mappings for use across report generation
+        self.configuration_mappings = {}
+
+    def set_configuration_mappings(self, config_mappings: Dict[str, Dict[str, str]]):
+        """
+        Set the configuration mappings for use in reports.
+
+        Args:
+            config_mappings: Dictionary mapping configuration_id to config details
+                           e.g., {'config123': {'embedder': 'model-name', 'search_strategy': 'semantic', 'chunking_strategy': 'hierarchical'}}
+        """
+        self.configuration_mappings = config_mappings
+
+    def _create_configuration_mapping_table(self, ws, start_row: int, start_col: int = 1) -> int:
+        """
+        Create a configuration mapping table in an Excel worksheet.
+
+        Args:
+            ws: Excel worksheet object
+            start_row: Starting row for the table
+            start_col: Starting column for the table
+
+        Returns:
+            int: Row number after the table
+        """
+        if not self.configuration_mappings:
+            return start_row
+
+        # Headers
+        headers = ['Configuration ID', 'Embedder Model', 'Search Strategy', 'Chunking Strategy']
+
+        # Title
+        title_cell = ws.cell(row=start_row, column=start_col, value="Configuration Mapping")
+        title_cell.font = Font(size=14, bold=True)
+        ws.merge_cells(
+            f'{title_cell.column_letter}{start_row}:{chr(ord(title_cell.column_letter) + len(headers) - 1)}{start_row}')
+
+        current_row = start_row + 2
+
+        # Create headers
+        for col, header in enumerate(headers, start_col):
+            cell = ws.cell(row=current_row, column=col, value=header)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        current_row += 1
+
+        # Add configuration data
+        for config_id, config_details in sorted(self.configuration_mappings.items()):
+            # Truncate config ID for display
+            display_config_id = config_id[:15] + "..." if len(config_id) > 18 else config_id
+
+            ws.cell(row=current_row, column=start_col, value=display_config_id)
+            ws.cell(row=current_row, column=start_col + 1, value=config_details.get('embedder', 'Unknown'))
+            ws.cell(row=current_row, column=start_col + 2, value=config_details.get('search_strategy', 'Unknown'))
+            ws.cell(row=current_row, column=start_col + 3, value=config_details.get('chunking_strategy', 'Unknown'))
+            current_row += 1
+
+        # Auto-adjust column widths
+        column_widths = [20, 25, 18, 20]
+        for i, width in enumerate(column_widths):
+            from openpyxl.utils import get_column_letter
+            column_letter = get_column_letter(start_col + i)
+            ws.column_dimensions[column_letter].width = width
+
+        return current_row + 1
 
     def generate_comprehensive_report(
             self,
@@ -90,17 +158,33 @@ class BenchmarkReportGenerator:
         # Convert metrics to DataFrame
         df = metrics_aggregator.to_dataframe()
 
+        # Add configuration details to the DataFrame
+        if self.configuration_mappings:
+            df['embedder_model'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('embedder', 'Unknown')
+            )
+            df['search_strategy'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('search_strategy', 'Unknown')
+            )
+            df['chunking_strategy'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('chunking_strategy', 'Unknown')
+            )
+
         # Save detailed metrics
         csv_file = self.report_dir / f"{report_name}_detailed_{self.timestamp}.csv"
         df.to_csv(csv_file, index=False)
 
-        # Generate summary CSV
+        # Generate summary CSV with configuration mappings
         summary_data = []
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
         for config_id, avg_metrics in config_averages.items():
+            config_details = self.configuration_mappings.get(config_id, {})
             summary_data.append({
                 'configuration_id': config_id,
+                'embedder_model': config_details.get('embedder', 'Unknown'),
+                'search_strategy': config_details.get('search_strategy', 'Unknown'),
+                'chunking_strategy': config_details.get('chunking_strategy', 'Unknown'),
                 'query_count': avg_metrics['query_count'],
                 # Document level metrics
                 'avg_document_precision': avg_metrics['document_precision'],
@@ -119,6 +203,20 @@ class BenchmarkReportGenerator:
         summary_csv_file = self.report_dir / f"{report_name}_summary_{self.timestamp}.csv"
         pd.DataFrame(summary_data).to_csv(summary_csv_file, index=False)
 
+        # Generate configuration mapping CSV
+        if self.configuration_mappings:
+            config_df = pd.DataFrame([
+                {
+                    'configuration_id': config_id,
+                    'embedder_model': details.get('embedder', 'Unknown'),
+                    'search_strategy': details.get('search_strategy', 'Unknown'),
+                    'chunking_strategy': details.get('chunking_strategy', 'Unknown')
+                }
+                for config_id, details in self.configuration_mappings.items()
+            ])
+            config_csv_file = self.report_dir / f"{report_name}_configurations_{self.timestamp}.csv"
+            config_df.to_csv(config_csv_file, index=False)
+
         return csv_file
 
     def generate_json_report(
@@ -135,16 +233,22 @@ class BenchmarkReportGenerator:
                 'total_queries': len(metrics_aggregator.metrics),
                 'total_configurations': len(metrics_aggregator.get_metrics_by_configuration())
             },
+            'configuration_mappings': self.configuration_mappings,
             'summary': metrics_aggregator.calculate_average_metrics_by_config(),
             'detailed_metrics': [],
             'best_configurations': {}
         }
 
-        # Add detailed metrics
+        # Add detailed metrics with configuration details
         for metric in metrics_aggregator.metrics:
-            report_data['detailed_metrics'].append({
+            config_details = self.configuration_mappings.get(metric.configuration_id, {})
+            metric_data = {
                 'query_id': metric.query_id,
                 'query_text': metric.query_text,
+                'configuration_id': metric.configuration_id,
+                'embedder_model': config_details.get('embedder', 'Unknown'),
+                'search_strategy': config_details.get('search_strategy', 'Unknown'),
+                'chunking_strategy': config_details.get('chunking_strategy', 'Unknown'),
                 # Document level
                 'document_precision': metric.document_precision,
                 'document_recall': metric.document_recall,
@@ -159,13 +263,13 @@ class BenchmarkReportGenerator:
                 'section_mrr': metric.section_mrr,
                 # General info
                 'search_type': metric.search_type.name,
-                'configuration_id': metric.configuration_id,
                 'ground_truth_count': metric.ground_truth_count,
                 'retrieved_count_total': metric.retrieved_count_total,
                 'retrieved_count_evaluated': metric.retrieved_count_evaluated,
                 'document_relevant_retrieved_count': metric.document_relevant_retrieved_count,
                 'section_relevant_retrieved_count': metric.section_relevant_retrieved_count
-            })
+            }
+            report_data['detailed_metrics'].append(metric_data)
 
         # Add best configurations for each metric (both levels)
         for level in ['document', 'section']:
@@ -173,9 +277,13 @@ class BenchmarkReportGenerator:
                 full_metric_name = f'{level}_{metric_name}'
                 best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(full_metric_name)
                 if best_config:
+                    config_details = self.configuration_mappings.get(best_config, {})
                     report_data['best_configurations'][full_metric_name] = {
                         'configuration_id': best_config,
-                        'value': best_value
+                        'value': best_value,
+                        'embedder_model': config_details.get('embedder', 'Unknown'),
+                        'search_strategy': config_details.get('search_strategy', 'Unknown'),
+                        'chunking_strategy': config_details.get('chunking_strategy', 'Unknown')
                     }
 
         # Save JSON report
@@ -228,7 +336,7 @@ class BenchmarkReportGenerator:
         return excel_file
 
     def _create_summary_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create executive summary sheet with the requested 5-column structure"""
+        """Create executive summary sheet with the requested 5-column structure and configuration table"""
         ws = wb.create_sheet("Executive Summary")
 
         # Title and metadata
@@ -242,9 +350,16 @@ class BenchmarkReportGenerator:
         ws[
             'A6'] = "Note: Document-level metrics (filename match) should be >= Section-level metrics (exact section match)"
 
+        current_row = 8
+
+        # Add configuration mapping table first
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
+
         # Main comparison table with requested 5-column structure
-        ws['A8'] = "Configuration Performance Comparison"
-        ws['A8'].font = Font(size=14, bold=True)
+        ws.cell(row=current_row, column=1, value="Configuration Performance Comparison").font = Font(size=14, bold=True)
+        current_row += 2
 
         headers = [
             'Configuration',
@@ -255,44 +370,55 @@ class BenchmarkReportGenerator:
         ]
 
         # Create merged headers
-        ws.merge_cells('A9:A10')
-        ws['A9'] = headers[0]
-        ws['A9'].alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(f'A{current_row}:A{current_row + 1}')
+        ws[f'A{current_row}'] = headers[0]
+        ws[f'A{current_row}'].alignment = Alignment(horizontal='center', vertical='center')
 
-        ws.merge_cells('B9:C9')
-        ws['B9'] = headers[1]
-        ws['B9'].alignment = Alignment(horizontal='center')
+        ws.merge_cells(f'B{current_row}:C{current_row}')
+        ws[f'B{current_row}'] = headers[1]
+        ws[f'B{current_row}'].alignment = Alignment(horizontal='center')
 
-        ws.merge_cells('D9:E9')
-        ws['D9'] = headers[2]
-        ws['D9'].alignment = Alignment(horizontal='center')
+        ws.merge_cells(f'D{current_row}:E{current_row}')
+        ws[f'D{current_row}'] = headers[2]
+        ws[f'D{current_row}'].alignment = Alignment(horizontal='center')
 
-        ws.merge_cells('F9:G9')
-        ws['F9'] = headers[3]
-        ws['F9'].alignment = Alignment(horizontal='center')
+        ws.merge_cells(f'F{current_row}:G{current_row}')
+        ws[f'F{current_row}'] = headers[3]
+        ws[f'F{current_row}'].alignment = Alignment(horizontal='center')
 
-        ws.merge_cells('H9:I9')
-        ws['H9'] = headers[4]
-        ws['H9'].alignment = Alignment(horizontal='center')
+        ws.merge_cells(f'H{current_row}:I{current_row}')
+        ws[f'H{current_row}'] = headers[4]
+        ws[f'H{current_row}'].alignment = Alignment(horizontal='center')
+
+        current_row += 1
 
         # Sub-headers for metrics
         metric_headers = ['Precision', 'Recall', 'F1-Score', 'NDCG', 'Precision', 'Recall', 'F1-Score', 'NDCG']
         for col, header in enumerate(metric_headers, 2):  # Start from column B
-            ws.cell(row=10, column=col, value=header)
+            ws.cell(row=current_row, column=col, value=header)
 
         # Style headers
-        for row in [9, 10]:
+        for row in [current_row - 1, current_row]:
             for col in range(1, 10):
                 cell = ws.cell(row=row, column=col)
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
+        current_row += 1
+
         # Add configuration data
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
-        for row, (config_id, metrics_data) in enumerate(config_averages.items(), 11):
-            # Configuration name (shortened)
-            short_config = f"Config-{row - 10}" if len(config_id) > 15 else config_id[:15]
+        for row_idx, (config_id, metrics_data) in enumerate(config_averages.items()):
+            row = current_row + row_idx
+            # Configuration name (enhanced with embedder info)
+            config_details = self.configuration_mappings.get(config_id, {})
+            embedder_short = config_details.get('embedder', '').split('/')[-1][:10] if config_details.get(
+                'embedder') else 'Unknown'
+            search_strategy = config_details.get('search_strategy', 'Unknown')[:10]
+            chunking_strategy = config_details.get('chunking_strategy', 'Unknown')[:10]
+
+            short_config = f"{embedder_short}|{search_strategy}|{chunking_strategy}"
             ws.cell(row=row, column=1, value=short_config)
 
             # Document level metrics (columns B-E)
@@ -324,7 +450,7 @@ class BenchmarkReportGenerator:
                     )
 
         # Best performers section
-        start_row = len(config_averages) + 13
+        start_row = current_row + len(config_averages) + 2
         ws.cell(row=start_row, column=1, value="Best Performing Configurations").font = Font(size=14, bold=True)
         start_row += 2
 
@@ -337,8 +463,10 @@ class BenchmarkReportGenerator:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric)
             if best_config:
                 metric_name = metric.replace('document_', '').replace('_', ' ').title()
+                config_details = self.configuration_mappings.get(best_config, {})
+                config_desc = f"{config_details.get('embedder', 'Unknown')[:15]}|{config_details.get('search_strategy', 'Unknown')}"
                 ws.cell(row=start_row, column=1, value=f"• {metric_name}:")
-                ws.cell(row=start_row, column=2, value=f"{best_config[:20]}... ({best_value:.4f})")
+                ws.cell(row=start_row, column=2, value=f"{config_desc[:25]}... ({best_value:.4f})")
                 start_row += 1
 
         start_row += 1
@@ -350,12 +478,14 @@ class BenchmarkReportGenerator:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric)
             if best_config:
                 metric_name = metric.replace('section_', '').replace('_', ' ').title()
+                config_details = self.configuration_mappings.get(best_config, {})
+                config_desc = f"{config_details.get('embedder', 'Unknown')[:15]}|{config_details.get('search_strategy', 'Unknown')}"
                 ws.cell(row=start_row, column=1, value=f"• {metric_name}:")
-                ws.cell(row=start_row, column=2, value=f"{best_config[:20]}... ({best_value:.4f})")
+                ws.cell(row=start_row, column=2, value=f"{config_desc[:25]}... ({best_value:.4f})")
                 start_row += 1
 
         # Auto-adjust column widths - FIXED VERSION
-        column_widths = [18, 12, 10, 12, 10, 12, 10, 12, 10]  # Adjusted for the 5-column structure
+        column_widths = [25, 12, 10, 12, 10, 12, 10, 12, 10]  # Adjusted for the 5-column structure
         for i, width in enumerate(column_widths, 1):
             # Convert column number to letter manually to avoid MergedCell issue
             from openpyxl.utils import get_column_letter
@@ -363,22 +493,48 @@ class BenchmarkReportGenerator:
             ws.column_dimensions[column_letter].width = width
 
     def _create_detailed_metrics_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create detailed metrics sheet with all query results"""
+        """Create detailed metrics sheet with all query results and configuration mapping"""
         ws = wb.create_sheet("Detailed Metrics")
+
+        current_row = 1
+
+        # Add configuration mapping table at the top
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
 
         # Convert to DataFrame and write to sheet
         df = metrics_aggregator.to_dataframe()
 
+        # Add configuration details columns
+        if self.configuration_mappings:
+            df['embedder_model'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('embedder', 'Unknown')
+            )
+            df['search_strategy'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('search_strategy', 'Unknown')
+            )
+            df['chunking_strategy'] = df['configuration_id'].map(
+                lambda x: self.configuration_mappings.get(x, {}).get('chunking_strategy', 'Unknown')
+            )
+
+        # Reorder columns to put configuration details first
+        if self.configuration_mappings:
+            cols = list(df.columns)
+            config_cols = ['configuration_id', 'embedder_model', 'search_strategy', 'chunking_strategy']
+            other_cols = [col for col in cols if col not in config_cols]
+            df = df[config_cols + other_cols]
+
         # Add headers
         headers = list(df.columns)
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header.replace('_', ' ').title())
+            cell = ws.cell(row=current_row, column=col, value=header.replace('_', ' ').title())
             cell.font = Font(bold=True)
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True)
 
         # Add data
-        for row_idx, row_data in enumerate(df.values, 2):
+        for row_idx, row_data in enumerate(df.values, current_row + 1):
             for col_idx, value in enumerate(row_data, 1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
@@ -390,62 +546,78 @@ class BenchmarkReportGenerator:
         for metric in dual_level_metrics:
             if metric in df.columns:
                 col_idx = df.columns.get_loc(metric) + 1
-                col_letter = ws.cell(row=1, column=col_idx).column_letter
-                cell_range = f"{col_letter}2:{col_letter}{len(df) + 1}"
+                from openpyxl.utils import get_column_letter
+                col_letter = get_column_letter(col_idx)
+                cell_range = f"{col_letter}{current_row + 1}:{col_letter}{len(df) + current_row}"
 
                 rule = ColorScaleRule(
-                    start_type='min', start_color='FF6B6B',  # Red for low values
-                    mid_type='percentile', mid_value=50, mid_color='FFE66D',  # Yellow for medium
-                    end_type='max', end_color='4ECDC4'  # Green for high values
+                    start_type='min', start_color='FF6B6B',  # Red
+                    mid_type='percentile', mid_value=50, mid_color='FFE66D',  # Yellow
+                    end_type='max', end_color='4ECDC4'  # Green
                 )
                 ws.conditional_formatting.add(cell_range, rule)
 
-        # Auto-adjust column widths
-        for column in ws.columns:
+        # Auto-adjust column widths (SAFE)
+        from openpyxl.utils import get_column_letter
+        for idx, column in enumerate(ws.columns, start=1):
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(idx)
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 40)
             ws.column_dimensions[column_letter].width = adjusted_width
 
     def _create_configuration_comparison_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create configuration comparison sheet with charts"""
+        """Create configuration comparison sheet with charts and configuration mapping"""
         ws = wb.create_sheet("Configuration Comparison")
+
+        current_row = 1
+
+        # Add configuration mapping table at the top
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
         # Create data table for document level
-        headers = ['Configuration ID', 'Doc_Precision', 'Doc_Recall', 'Doc_F1', 'Doc_NDCG', 'Sec_Precision',
-                   'Sec_Recall', 'Sec_F1', 'Sec_NDCG', 'Query Count']
+        headers = ['Configuration ID', 'Embedder Model', 'Search Strategy', 'Chunking Strategy',
+                   'Doc_Precision', 'Doc_Recall', 'Doc_F1', 'Doc_NDCG',
+                   'Sec_Precision', 'Sec_Recall', 'Sec_F1', 'Sec_NDCG', 'Query Count']
+
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
+            cell = ws.cell(row=current_row, column=col, value=header)
             cell.font = Font(bold=True)
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True)
 
         # Add configuration data
         config_ids = []
-        for row, (config_id, metrics_data) in enumerate(config_averages.items(), 2):
-            short_id = f"Config {row - 1}"
+        data_start_row = current_row + 1
+        for row, (config_id, metrics_data) in enumerate(config_averages.items(), data_start_row):
+            short_id = f"Config {row - data_start_row + 1}"
             config_ids.append(short_id)
+            config_details = self.configuration_mappings.get(config_id, {})
 
             ws.cell(row=row, column=1, value=short_id)
+            ws.cell(row=row, column=2, value=config_details.get('embedder', 'Unknown')[:20])
+            ws.cell(row=row, column=3, value=config_details.get('search_strategy', 'Unknown'))
+            ws.cell(row=row, column=4, value=config_details.get('chunking_strategy', 'Unknown'))
             # Document level
-            ws.cell(row=row, column=2, value=round(metrics_data['document_precision'], 4))
-            ws.cell(row=row, column=3, value=round(metrics_data['document_recall'], 4))
-            ws.cell(row=row, column=4, value=round(metrics_data['document_f1_score'], 4))
-            ws.cell(row=row, column=5, value=round(metrics_data['document_ndcg'], 4))
+            ws.cell(row=row, column=5, value=round(metrics_data['document_precision'], 4))
+            ws.cell(row=row, column=6, value=round(metrics_data['document_recall'], 4))
+            ws.cell(row=row, column=7, value=round(metrics_data['document_f1_score'], 4))
+            ws.cell(row=row, column=8, value=round(metrics_data['document_ndcg'], 4))
             # Section level
-            ws.cell(row=row, column=6, value=round(metrics_data['section_precision'], 4))
-            ws.cell(row=row, column=7, value=round(metrics_data['section_recall'], 4))
-            ws.cell(row=row, column=8, value=round(metrics_data['section_f1_score'], 4))
-            ws.cell(row=row, column=9, value=round(metrics_data['section_ndcg'], 4))
-            ws.cell(row=row, column=10, value=metrics_data['query_count'])
+            ws.cell(row=row, column=9, value=round(metrics_data['section_precision'], 4))
+            ws.cell(row=row, column=10, value=round(metrics_data['section_recall'], 4))
+            ws.cell(row=row, column=11, value=round(metrics_data['section_f1_score'], 4))
+            ws.cell(row=row, column=12, value=round(metrics_data['section_ndcg'], 4))
+            ws.cell(row=row, column=13, value=metrics_data['query_count'])
 
         # Create chart for document level F1 scores
         if len(config_averages) > 0:
@@ -456,35 +628,45 @@ class BenchmarkReportGenerator:
             chart.y_axis.title = 'F1 Score'
             chart.x_axis.title = 'Configuration'
 
-            # Add data series for document and section F1
-            doc_f1_values = Reference(ws, min_col=4, min_row=2, max_row=len(config_averages) + 1)
-            sec_f1_values = Reference(ws, min_col=8, min_row=2, max_row=len(config_averages) + 1)
+            doc_f1_values = Reference(ws, min_col=7, min_row=data_start_row,
+                                      max_row=data_start_row + len(config_averages) - 1)
+            sec_f1_values = Reference(ws, min_col=11, min_row=data_start_row,
+                                      max_row=data_start_row + len(config_averages) - 1)
 
-            doc_series = chart.add_data(doc_f1_values, titles_from_data=False)
-            sec_series = chart.add_data(sec_f1_values, titles_from_data=False)
+            chart.add_data(doc_f1_values, titles_from_data=False)
+            chart.add_data(sec_f1_values, titles_from_data=False)
 
-            categories = Reference(ws, min_col=1, min_row=2, max_row=len(config_averages) + 1)
+            categories = Reference(ws, min_col=1, min_row=data_start_row,
+                                   max_row=data_start_row + len(config_averages) - 1)
             chart.set_categories(categories)
             chart.legend.position = 'b'
 
-            ws.add_chart(chart, "L2")
+            ws.add_chart(chart, f"O{current_row}")
 
-        # Auto-adjust column widths
-        for column in ws.columns:
+        # Auto-adjust column widths (SAFE)
+        from openpyxl.utils import get_column_letter
+        for idx, column in enumerate(ws.columns, start=1):
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(idx)
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 30)
             ws.column_dimensions[column_letter].width = adjusted_width
 
     def _create_search_type_analysis_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create search type analysis sheet"""
+        """Create search type analysis sheet with configuration mapping"""
         ws = wb.create_sheet("Search Type Analysis")
+
+        current_row = 1
+
+        # Add configuration mapping table at the top
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
 
         search_type_metrics = metrics_aggregator.get_metrics_by_search_type()
 
@@ -507,20 +689,20 @@ class BenchmarkReportGenerator:
                 }
 
         if not search_type_averages:
-            ws['A1'] = "No search type data available"
+            ws.cell(row=current_row, column=1, value="No search type data available")
             return
 
         # Create headers
         headers = ['Search Type', 'Doc_Precision', 'Doc_Recall', 'Doc_F1', 'Doc_NDCG',
                    'Sec_Precision', 'Sec_Recall', 'Sec_F1', 'Sec_NDCG', 'Query Count']
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
+            cell = ws.cell(row=current_row, column=col, value=header)
             cell.font = Font(bold=True)
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True)
 
         # Add search type data
-        for row, (search_type, metrics_data) in enumerate(search_type_averages.items(), 2):
+        for row, (search_type, metrics_data) in enumerate(search_type_averages.items(), current_row + 1):
             ws.cell(row=row, column=1, value=search_type)
             # Document level
             ws.cell(row=row, column=2, value=round(metrics_data['document_precision'], 4))
@@ -534,27 +716,35 @@ class BenchmarkReportGenerator:
             ws.cell(row=row, column=9, value=round(metrics_data['section_ndcg'], 4))
             ws.cell(row=row, column=10, value=metrics_data['query_count'])
 
-        # Auto-adjust column widths
-        for column in ws.columns:
+        # Auto-adjust column widths (SAFE)
+        from openpyxl.utils import get_column_letter
+        for idx, column in enumerate(ws.columns, start=1):
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(idx)
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 25)
             ws.column_dimensions[column_letter].width = adjusted_width
 
     def _create_query_analysis_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create query analysis sheet showing per-query statistics"""
+        """Create query analysis sheet showing per-query statistics with configuration mapping"""
         ws = wb.create_sheet("Query Analysis")
+
+        current_row = 1
+
+        # Add configuration mapping table at the top
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
 
         df = metrics_aggregator.to_dataframe()
 
         if df.empty:
-            ws['A1'] = "No query data available"
+            ws.cell(row=current_row, column=1, value="No query data available")
             return
 
         # Group by query and calculate statistics
@@ -565,120 +755,115 @@ class BenchmarkReportGenerator:
 
         query_stats = df.groupby('query_id')[dual_level_metrics].agg(['mean', 'std', 'max', 'min']).round(4)
 
-        # 🔹 Flatten MultiIndex columns BEFORE merging
+        # Flatten MultiIndex columns
         query_stats.columns = ['_'.join(col).strip() for col in query_stats.columns.values]
-
-        # Reset index
         query_stats = query_stats.reset_index()
 
-        # Config counts (single-level columns already)
+        # Config counts
         config_counts = df.groupby('query_id')['configuration_id'].count().reset_index(name='config_count')
-
-        # Safe merge now
         query_stats = query_stats.merge(config_counts, on='query_id', how='left')
-
-        # Flatten column names for MultiIndex columns
-        new_columns = []
-        for col in query_stats.columns:
-            if isinstance(col, tuple):
-                new_columns.append('_'.join(col).strip())
-            else:
-                new_columns.append(col)
-        query_stats.columns = new_columns
 
         # Write headers
         headers = list(query_stats.columns)
         for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header.replace('_', ' ').title())
+            cell = ws.cell(row=current_row, column=col, value=header.replace('_', ' ').title())
             cell.font = Font(bold=True)
             cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
             cell.font = Font(color="FFFFFF", bold=True)
 
         # Write data
-        for row_idx, row_data in enumerate(query_stats.values, 2):
+        for row_idx, row_data in enumerate(query_stats.values, current_row + 1):
             for col_idx, value in enumerate(row_data, 1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
-        # Auto-adjust column widths
-        for column in ws.columns:
+        # Auto-adjust column widths (SAFE)
+        from openpyxl.utils import get_column_letter
+        for idx, column in enumerate(ws.columns, start=1):
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(idx)
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 20)
             ws.column_dimensions[column_letter].width = adjusted_width
 
     def _create_performance_ranking_sheet(self, wb: Workbook, metrics_aggregator: MetricsAggregator):
-        """Create performance ranking sheet showing best and worst performers"""
+        """Create performance ranking sheet showing best and worst performers with configuration details"""
         ws = wb.create_sheet("Performance Ranking")
+
+        current_row = 1
+
+        # Add configuration mapping table at the top
+        if self.configuration_mappings:
+            current_row = self._create_configuration_mapping_table(ws, current_row)
+            current_row += 2
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
         if not config_averages:
-            ws['A1'] = "No configuration data available"
+            ws.cell(row=current_row, column=1, value="No configuration data available")
             return
 
-        # Create rankings for each dual-level metric
         dual_level_metrics = [
             'document_precision', 'document_recall', 'document_f1_score', 'document_ndcg',
             'section_precision', 'section_recall', 'section_f1_score', 'section_ndcg'
         ]
-        start_row = 1
 
         for metric in dual_level_metrics:
-            # Sort configurations by metric
-            sorted_configs = sorted(
-                config_averages.items(),
-                key=lambda x: x[1][metric],
-                reverse=True
-            )
+            sorted_configs = sorted(config_averages.items(), key=lambda x: x[1][metric], reverse=True)
 
             # Title
-            ws.cell(row=start_row, column=1, value=f"{metric.replace('_', ' ').title()} Rankings").font = Font(size=14,
-                                                                                                               bold=True)
-            start_row += 2
+            ws.cell(row=current_row, column=1, value=f"{metric.replace('_', ' ').title()} Rankings").font = Font(
+                size=14, bold=True)
+            current_row += 2
 
             # Headers
-            headers = ['Rank', 'Configuration ID', metric.replace('_', ' ').title(), 'Query Count']
+            headers = ['Rank', 'Configuration ID', 'Embedder Model', 'Search Strategy', 'Chunking Strategy',
+                       metric.replace('_', ' ').title(), 'Query Count']
             for col, header in enumerate(headers, 1):
-                cell = ws.cell(row=start_row, column=col, value=header)
+                cell = ws.cell(row=current_row, column=col, value=header)
                 cell.font = Font(bold=True)
                 cell.fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
                 cell.font = Font(color="FFFFFF", bold=True)
 
-            start_row += 1
+            current_row += 1
 
             # Add ranking data
             for rank, (config_id, config_metrics) in enumerate(sorted_configs, 1):
-                ws.cell(row=start_row, column=1, value=rank)
-                ws.cell(row=start_row, column=2, value=config_id[:30] + "..." if len(config_id) > 30 else config_id)
-                ws.cell(row=start_row, column=3, value=round(config_metrics[metric], 4))
-                ws.cell(row=start_row, column=4, value=config_metrics['query_count'])
+                config_details = self.configuration_mappings.get(config_id, {})
+
+                ws.cell(row=current_row, column=1, value=rank)
+                ws.cell(row=current_row, column=2, value=config_id[:15] + "..." if len(config_id) > 15 else config_id)
+                ws.cell(row=current_row, column=3, value=config_details.get('embedder', 'Unknown')[:20])
+                ws.cell(row=current_row, column=4, value=config_details.get('search_strategy', 'Unknown'))
+                ws.cell(row=current_row, column=5, value=config_details.get('chunking_strategy', 'Unknown'))
+                ws.cell(row=current_row, column=6, value=round(config_metrics[metric], 4))
+                ws.cell(row=current_row, column=7, value=config_metrics['query_count'])
 
                 # Highlight top 3
                 if rank <= 3:
                     colors = ['FFD700', 'C0C0C0', 'CD7F32']  # Gold, Silver, Bronze
                     fill = PatternFill(start_color=colors[rank - 1], end_color=colors[rank - 1], fill_type="solid")
-                    for col in range(1, 5):
-                        ws.cell(row=start_row, column=col).fill = fill
+                    for col in range(1, 8):
+                        ws.cell(row=current_row, column=col).fill = fill
 
-                start_row += 1
+                current_row += 1
 
-            start_row += 2  # Space between sections
+            current_row += 2
 
-        # Auto-adjust column widths
-        for column in ws.columns:
+        # Auto-adjust column widths (SAFE)
+        from openpyxl.utils import get_column_letter
+        for idx, column in enumerate(ws.columns, start=1):
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = get_column_letter(idx)
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_length:
+                    if cell.value and len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
-                except:
+                except Exception:
                     pass
             adjusted_width = min(max_length + 2, 40)
             ws.column_dimensions[column_letter].width = adjusted_width
@@ -706,7 +891,7 @@ class BenchmarkReportGenerator:
         return plots_dir
 
     def _generate_html_content(self, metrics_aggregator: MetricsAggregator) -> str:
-        """Generate HTML content for the report"""
+        """Generate HTML content for the report with configuration mapping"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
@@ -728,6 +913,7 @@ class BenchmarkReportGenerator:
         .dual-level {{ background-color: #f9f9f9; }}
         .document-level {{ background-color: #e8f5e8; }}
         .section-level {{ background-color: #ffe8e8; }}
+        .config-table {{ background-color: #f8f9fa; }}
     </style>
 </head>
 <body>
@@ -738,7 +924,43 @@ class BenchmarkReportGenerator:
         <p>Total Configurations: {len(config_averages)}</p>
         <p><strong>Evaluation Strategy:</strong> Document-level (filename match) and Section-level (exact section match)</p>
     </div>
+        """
 
+        # Add configuration mapping table if available
+        if self.configuration_mappings:
+            html += """
+    <div class="section config-table">
+        <h2>Configuration Mapping</h2>
+        <table class="metrics-table">
+            <thead>
+                <tr>
+                    <th>Configuration ID</th>
+                    <th>Embedder Model</th>
+                    <th>Search Strategy</th>
+                    <th>Chunking Strategy</th>
+                </tr>
+            </thead>
+            <tbody>
+            """
+
+            for config_id, config_details in sorted(self.configuration_mappings.items()):
+                short_config_id = config_id[:15] + "..." if len(config_id) > 18 else config_id
+                html += f"""
+                <tr>
+                    <td>{short_config_id}</td>
+                    <td>{config_details.get('embedder', 'Unknown')}</td>
+                    <td>{config_details.get('search_strategy', 'Unknown')}</td>
+                    <td>{config_details.get('chunking_strategy', 'Unknown')}</td>
+                </tr>
+                """
+
+            html += """
+            </tbody>
+        </table>
+    </div>
+            """
+
+        html += f"""
     <div class="section">
         <h2>Configuration Performance Summary - Document Level</h2>
         <p>Document-level metrics consider a chunk relevant if it comes from the correct filename.</p>
@@ -746,6 +968,8 @@ class BenchmarkReportGenerator:
             <thead>
                 <tr>
                     <th>Configuration ID</th>
+                    <th>Embedder</th>
+                    <th>Search</th>
                     <th>Queries</th>
                     <th>Precision</th>
                     <th>Recall</th>
@@ -757,11 +981,18 @@ class BenchmarkReportGenerator:
             <tbody>
         """
 
-        # Add document-level configuration data
+        # Add document-level configuration data with configuration details
         for config_id, metrics in config_averages.items():
+            config_details = self.configuration_mappings.get(config_id, {})
+            short_config_id = config_id[:12] + "..." if len(config_id) > 15 else config_id
+            embedder_short = config_details.get('embedder', 'Unknown')[:15]
+            search_short = config_details.get('search_strategy', 'Unknown')[:10]
+
             html += f"""
                 <tr class="document-level">
-                    <td>{config_id[:12]}...</td>
+                    <td>{short_config_id}</td>
+                    <td>{embedder_short}</td>
+                    <td>{search_short}</td>
                     <td>{metrics['query_count']}</td>
                     <td>{metrics['document_precision']:.4f}</td>
                     <td>{metrics['document_recall']:.4f}</td>
@@ -783,6 +1014,8 @@ class BenchmarkReportGenerator:
             <thead>
                 <tr>
                     <th>Configuration ID</th>
+                    <th>Embedder</th>
+                    <th>Search</th>
                     <th>Queries</th>
                     <th>Precision</th>
                     <th>Recall</th>
@@ -796,9 +1029,16 @@ class BenchmarkReportGenerator:
 
         # Add section-level configuration data
         for config_id, metrics in config_averages.items():
+            config_details = self.configuration_mappings.get(config_id, {})
+            short_config_id = config_id[:12] + "..." if len(config_id) > 15 else config_id
+            embedder_short = config_details.get('embedder', 'Unknown')[:15]
+            search_short = config_details.get('search_strategy', 'Unknown')[:10]
+
             html += f"""
                 <tr class="section-level">
-                    <td>{config_id[:12]}...</td>
+                    <td>{short_config_id}</td>
+                    <td>{embedder_short}</td>
+                    <td>{search_short}</td>
                     <td>{metrics['query_count']}</td>
                     <td>{metrics['section_precision']:.4f}</td>
                     <td>{metrics['section_recall']:.4f}</td>
@@ -823,7 +1063,10 @@ class BenchmarkReportGenerator:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
                 display_name = metric_name.replace('document_', '').replace('_', ' ').title()
-                html += f"<p><strong>Best {display_name}:</strong> {best_config[:12]}... ({best_value:.4f})</p>"
+                config_details = self.configuration_mappings.get(best_config, {})
+                embedder = config_details.get('embedder', 'Unknown')[:20]
+                search_strategy = config_details.get('search_strategy', 'Unknown')
+                html += f"<p><strong>Best {display_name}:</strong> {embedder} | {search_strategy} ({best_value:.4f})</p>"
 
         html += "<h3>Section Level Champions</h3>"
 
@@ -831,7 +1074,10 @@ class BenchmarkReportGenerator:
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
                 display_name = metric_name.replace('section_', '').replace('_', ' ').title()
-                html += f"<p><strong>Best {display_name}:</strong> {best_config[:12]}... ({best_value:.4f})</p>"
+                config_details = self.configuration_mappings.get(best_config, {})
+                embedder = config_details.get('embedder', 'Unknown')[:20]
+                search_strategy = config_details.get('search_strategy', 'Unknown')
+                html += f"<p><strong>Best {display_name}:</strong> {embedder} | {search_strategy} ({best_value:.4f})</p>"
 
         html += """
     </div>
@@ -842,7 +1088,7 @@ class BenchmarkReportGenerator:
         return html
 
     def _generate_markdown_content(self, metrics_aggregator: MetricsAggregator) -> str:
-        """Generate Markdown content for the dual-level report"""
+        """Generate Markdown content for the dual-level report with configuration mapping"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
@@ -858,21 +1104,40 @@ This report presents the results of benchmarking different RAG configurations us
 - **Document Level:** Chunks are relevant if they come from the correct filename
 - **Section Level:** Chunks are relevant only if they match the exact chapter/section/subsection
 
-## Document Level Performance
-
-| Configuration ID | Queries | Precision | Recall | F1-Score | NDCG | MRR |
-|------------------|---------|-----------|--------|----------|------|-----|
 """
 
+        # Add configuration mapping table if available
+        if self.configuration_mappings:
+            md_content += """## Configuration Mapping
+
+| Configuration ID | Embedder Model | Search Strategy | Chunking Strategy |
+|------------------|----------------|-----------------|-------------------|
+"""
+            for config_id, config_details in sorted(self.configuration_mappings.items()):
+                short_config_id = config_id[:20] + "..." if len(config_id) > 23 else config_id
+                md_content += f"| {short_config_id} | {config_details.get('embedder', 'Unknown')} | {config_details.get('search_strategy', 'Unknown')} | {config_details.get('chunking_strategy', 'Unknown')} |\n"
+
+        md_content += "\n## Document Level Performance\n\n"
+        md_content += "| Configuration ID | Embedder | Search | Queries | Precision | Recall | F1-Score | NDCG | MRR |\n"
+        md_content += "|------------------|----------|--------|---------|-----------|--------|----------|------|-----|\n"
+
         for config_id, metrics in config_averages.items():
-            md_content += f"| {config_id[:20]}... | {metrics['query_count']} | {metrics['document_precision']:.4f} | {metrics['document_recall']:.4f} | {metrics['document_f1_score']:.4f} | {metrics['document_ndcg']:.4f} | {metrics['document_mrr']:.4f} |\n"
+            config_details = self.configuration_mappings.get(config_id, {})
+            short_config_id = config_id[:15] + "..." if len(config_id) > 18 else config_id
+            embedder_short = config_details.get('embedder', 'Unknown')[:12]
+            search_short = config_details.get('search_strategy', 'Unknown')[:8]
+            md_content += f"| {short_config_id} | {embedder_short} | {search_short} | {metrics['query_count']} | {metrics['document_precision']:.4f} | {metrics['document_recall']:.4f} | {metrics['document_f1_score']:.4f} | {metrics['document_ndcg']:.4f} | {metrics['document_mrr']:.4f} |\n"
 
         md_content += "\n## Section Level Performance\n\n"
-        md_content += "| Configuration ID | Queries | Precision | Recall | F1-Score | NDCG | MRR |\n"
-        md_content += "|------------------|---------|-----------|--------|----------|------|-----|\n"
+        md_content += "| Configuration ID | Embedder | Search | Queries | Precision | Recall | F1-Score | NDCG | MRR |\n"
+        md_content += "|------------------|----------|--------|---------|-----------|--------|----------|------|-----|\n"
 
         for config_id, metrics in config_averages.items():
-            md_content += f"| {config_id[:20]}... | {metrics['query_count']} | {metrics['section_precision']:.4f} | {metrics['section_recall']:.4f} | {metrics['section_f1_score']:.4f} | {metrics['section_ndcg']:.4f} | {metrics['section_mrr']:.4f} |\n"
+            config_details = self.configuration_mappings.get(config_id, {})
+            short_config_id = config_id[:15] + "..." if len(config_id) > 18 else config_id
+            embedder_short = config_details.get('embedder', 'Unknown')[:12]
+            search_short = config_details.get('search_strategy', 'Unknown')[:8]
+            md_content += f"| {short_config_id} | {embedder_short} | {search_short} | {metrics['query_count']} | {metrics['section_precision']:.4f} | {metrics['section_recall']:.4f} | {metrics['section_f1_score']:.4f} | {metrics['section_ndcg']:.4f} | {metrics['section_mrr']:.4f} |\n"
 
         md_content += "\n## Best Configurations by Metric\n\n### Document Level Champions\n\n"
 
@@ -881,7 +1146,10 @@ This report presents the results of benchmarking different RAG configurations us
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
                 display_name = metric_name.replace('document_', '').replace('_', ' ').title()
-                md_content += f"- **Best {display_name}:** {best_config} ({best_value:.4f})\n"
+                config_details = self.configuration_mappings.get(best_config, {})
+                embedder = config_details.get('embedder', 'Unknown')
+                search_strategy = config_details.get('search_strategy', 'Unknown')
+                md_content += f"- **Best {display_name}:** {embedder} | {search_strategy} ({best_value:.4f})\n"
 
         md_content += "\n### Section Level Champions\n\n"
 
@@ -889,7 +1157,10 @@ This report presents the results of benchmarking different RAG configurations us
             best_config, best_value = metrics_aggregator.get_best_configuration_by_metric(metric_name)
             if best_config:
                 display_name = metric_name.replace('section_', '').replace('_', ' ').title()
-                md_content += f"- **Best {display_name}:** {best_config} ({best_value:.4f})\n"
+                config_details = self.configuration_mappings.get(best_config, {})
+                embedder = config_details.get('embedder', 'Unknown')
+                search_strategy = config_details.get('search_strategy', 'Unknown')
+                md_content += f"- **Best {display_name}:** {embedder} | {search_strategy} ({best_value:.4f})\n"
 
         md_content += "\n## Methodology\n\n"
         md_content += "The benchmark evaluated RAG configurations using dual-level metrics:\n\n"
@@ -909,7 +1180,7 @@ This report presents the results of benchmarking different RAG configurations us
         return md_content
 
     def _plot_dual_level_metrics_by_configuration(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
-        """Plot dual-level metrics comparison by configuration"""
+        """Plot dual-level metrics comparison by configuration with enhanced labels"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
 
@@ -917,7 +1188,14 @@ This report presents the results of benchmarking different RAG configurations us
             return
 
         configs = list(config_averages.keys())
-        config_labels = [f"Config {i + 1}" for i in range(len(configs))]
+
+        # Create enhanced labels with configuration details
+        config_labels = []
+        for i, config_id in enumerate(configs):
+            config_details = self.configuration_mappings.get(config_id, {})
+            embedder_short = config_details.get('embedder', 'Unknown').split('/')[-1][:8]
+            search_short = config_details.get('search_strategy', 'Unknown')[:8]
+            config_labels.append(f"{embedder_short}|{search_short}")
 
         dual_level_metrics = ['precision', 'recall', 'f1_score', 'ndcg']
 
@@ -944,7 +1222,7 @@ This report presents the results of benchmarking different RAG configurations us
             ax.set_ylabel('Score')
             ax.set_xlabel('Configuration')
             ax.set_xticks(x)
-            ax.set_xticklabels(config_labels, rotation=45)
+            ax.set_xticklabels(config_labels, rotation=45, ha='right')
             ax.legend()
 
             # Highlight best configurations
@@ -1072,8 +1350,14 @@ This report presents the results of benchmarking different RAG configurations us
             doc_values = [config_metrics[f'document_{metric}'] for metric in base_metrics]
             doc_values += doc_values[:1]  # Complete the circle
 
+            # Create enhanced label with configuration details
+            config_details = self.configuration_mappings.get(config_id, {})
+            embedder_short = config_details.get('embedder', 'Unknown').split('/')[-1][:10]
+            search_short = config_details.get('search_strategy', 'Unknown')[:8]
+            label = f'{embedder_short}|{search_short}'
+
             ax1.plot(angles, doc_values, 'o-', linewidth=2,
-                     label=f'Config {i + 1}', color=colors[i])
+                     label=label, color=colors[i])
             ax1.fill(angles, doc_values, alpha=0.25, color=colors[i])
 
         ax1.set_xticks(angles[:-1])
@@ -1087,8 +1371,14 @@ This report presents the results of benchmarking different RAG configurations us
             sec_values = [config_metrics[f'section_{metric}'] for metric in base_metrics]
             sec_values += sec_values[:1]  # Complete the circle
 
+            # Create enhanced label with configuration details
+            config_details = self.configuration_mappings.get(config_id, {})
+            embedder_short = config_details.get('embedder', 'Unknown').split('/')[-1][:10]
+            search_short = config_details.get('search_strategy', 'Unknown')[:8]
+            label = f'{embedder_short}|{search_short}'
+
             ax2.plot(angles, sec_values, 'o-', linewidth=2,
-                     label=f'Config {i + 1}', color=colors[i])
+                     label=label, color=colors[i])
             ax2.fill(angles, sec_values, alpha=0.25, color=colors[i])
 
         ax2.set_xticks(angles[:-1])

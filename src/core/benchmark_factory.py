@@ -18,18 +18,20 @@ from src.vectordb.embedding_service import start_server
 
 class BenchmarkFactory:
     """
-    Main factory class that orchestrates the RAG benchmarking pipeline.
+    Main factory class that orchestrates the RAG benchmarking pipeline with enhanced configuration tracking.
 
     This class:
     1. Loads configuration from YAML
     2. Starts embedding/reranking servers
     3. Creates different RAG configurations for benchmarking
     4. Runs ingestion and evaluation pipelines
+    5. Generates enhanced reports with configuration mapping
     """
 
     def __init__(self, yaml_file: Path):
         self.config = self._load_config(yaml_file)
         self.embedding_server_thread = None
+        self.rag_configurations = []  # Store all created configurations for reporting
 
     def _load_config(self, yaml_file: Path) -> dict:
         """Load and validate YAML configuration"""
@@ -48,7 +50,7 @@ class BenchmarkFactory:
         return config
 
     def start(self):
-        """Main entry point to start the benchmarking process"""
+        """Main entry point to start the benchmarking process with enhanced reporting"""
         print("Starting RAG benchmark factory...")
 
         # Step 1: Bootstrap embedding server (commented out as per original)
@@ -60,10 +62,20 @@ class BenchmarkFactory:
 
         # Step 3: Create RAG configurations for different combinations
         rag_configs = self._create_RAG_configurations()
+        self.rag_configurations = rag_configs  # Store for later use in reporting
 
         print(f"Created {len(rag_configs)} RAG configurations to benchmark")
 
-        # Step 4: Run pipelines for each configuration
+        # Step 4: Option A - Run pipelines individually (original approach)
+        # self._run_individual_pipelines(rag_configs, db_manager)
+
+        # Step 4: Option B - Run pipelines with consolidated reporting (enhanced approach)
+        self._run_pipelines_with_consolidated_reporting(rag_configs, db_manager)
+
+        print("All benchmark pipelines completed with enhanced reporting!")
+
+    def _run_individual_pipelines(self, rag_configs: List[RAGConfiguration], db_manager: WeaviateDBManager):
+        """Run pipelines individually (original approach)"""
         threads = []
         for i, rag_config in enumerate(rag_configs):
             print(f"Starting pipeline {i + 1}/{len(rag_configs)}: {rag_config.collection_name}")
@@ -84,7 +96,63 @@ class BenchmarkFactory:
         for thread in threads:
             thread.join()
 
-        print("All benchmark pipelines completed!")
+    def _run_pipelines_with_consolidated_reporting(self, rag_configs: List[RAGConfiguration],
+                                                   db_manager: WeaviateDBManager):
+        """Run pipelines with consolidated reporting across all configurations"""
+
+        # Step 1: Run ingestion for all configurations
+        print("\n=== INGESTION PHASE ===")
+        for i, rag_config in enumerate(rag_configs):
+            print(f"Running ingestion {i + 1}/{len(rag_configs)}: {rag_config.collection_name}")
+            ingestion_service = DocumentIngestionService(db_manager)
+            processed_count = ingestion_service.process(rag_config)
+            print(f"Ingested {processed_count} chunks for {rag_config.collection_name}")
+
+        # Step 2: Run evaluation for all configurations with consolidated reporting
+        print(f"\n=== EVALUATION PHASE ===")
+        retrieval_service = DocumentRetrievalService(db_manager)
+        evaluation_summary = retrieval_service.retrieve_evaluate_multiple_configs(rag_configs)
+
+        # Step 3: Print final summary
+        self._print_final_summary(evaluation_summary, len(rag_configs))
+
+    def _print_final_summary(self, evaluation_summary: dict, num_configs: int):
+        """Print final summary of all evaluations"""
+        print(f"\n" + "=" * 100)
+        print(f"🏁 BENCHMARK FACTORY COMPLETED - FINAL SUMMARY")
+        print(f"=" * 100)
+        print(f"📊 Configurations evaluated: {num_configs}")
+        print(f"📋 Total queries processed: {evaluation_summary.get('total_queries', 0)}")
+
+        if evaluation_summary.get('best_configurations'):
+            print(f"\n🏆 OVERALL BEST PERFORMERS:")
+            best_configs = evaluation_summary.get('best_configurations', {})
+
+            # Show top document level performers
+            print(f"\n📄 Document Level Champions:")
+            for metric in ['document_precision', 'document_recall', 'document_f1_score', 'document_ndcg']:
+                if metric in best_configs and best_configs[metric]:
+                    config_id, value = best_configs[metric]
+                    short_config = config_id[:25] + "..." if len(config_id) > 28 else config_id
+                    metric_display = metric.replace('document_', '').replace('_', ' ').title()
+                    print(f"  🥇 {metric_display}: {short_config} ({value:.4f})")
+
+            # Show top section level performers
+            print(f"\n📑 Section Level Champions:")
+            for metric in ['section_precision', 'section_recall', 'section_f1_score', 'section_ndcg']:
+                if metric in best_configs and best_configs[metric]:
+                    config_id, value = best_configs[metric]
+                    short_config = config_id[:25] + "..." if len(config_id) > 28 else config_id
+                    metric_display = metric.replace('section_', '').replace('_', ' ').title()
+                    print(f"  🥇 {metric_display}: {short_config} ({value:.4f})")
+
+        print(f"\n📁 Reports generated with:")
+        print(f"  • Configuration mapping tables showing embedder, search strategy, and chunking details")
+        print(f"  • Dual-level metrics (document vs section level evaluation)")
+        print(f"  • Enhanced Excel reports with specialized sheets")
+        print(f"  • HTML reports with configuration tables")
+        print(f"  • JSON reports with programmatic access to configuration details")
+        print(f"=" * 100)
 
     def _create_db_manager(self) -> WeaviateDBManager:
         """Create and configure Weaviate database manager"""
@@ -331,3 +399,28 @@ class BenchmarkFactory:
             import traceback
             traceback.print_exc()
             raise
+
+    def get_configuration_summary(self) -> dict:
+        """
+        Get a summary of all created configurations for reporting purposes.
+
+        Returns:
+            Dictionary with configuration details for reporting
+        """
+        summary = {
+            'total_configurations': len(self.rag_configurations),
+            'embedding_model': self.config['embedding']['model'],
+            'reranking_model': self.config['reranking']['model'],
+            'configurations': []
+        }
+
+        for config in self.rag_configurations:
+            config_info = {
+                'collection_name': config.collection_name,
+                'embedder': config.model_manager.config.get('embedding_model_name', 'Unknown'),
+                'chunking_strategy': getattr(config.chunking, 'name', getattr(config.chunking, '_name', 'Unknown')),
+                'search_strategies': [sc.search_type.name for sc in config.search_configs]
+            }
+            summary['configurations'].append(config_info)
+
+        return summary
