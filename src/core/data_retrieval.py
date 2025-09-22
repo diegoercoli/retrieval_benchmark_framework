@@ -37,7 +37,7 @@ class DocumentRetrievalService(RetrievalService):
         """Enhanced retrieve and evaluate method using dual-level evaluation service."""
 
         print(f"⏱️  Starting retrieval/evaluation for '{config.collection_name}'")
-        #start_time = time.time()
+        # start_time = time.time()
 
         # Use the new evaluation service with injected retrieval function
         self.evaluation_service.evaluate_retrieval_results(
@@ -45,12 +45,44 @@ class DocumentRetrievalService(RetrievalService):
             retrieval_function=self._create_retrieval_function()
         )
 
-        # Generate comprehensive reports
+        # Generate comprehensive reports with configuration mapping
         self.evaluation_service.generate_reports(config)
 
         # Clear metrics for next collection (if processing multiple)
         # Note: Don't clear here if you want to aggregate across collections
         # self.evaluation_service.clear_metrics()
+
+        # Return summary for programmatic access
+        return self.evaluation_service.get_metrics_summary()
+
+    def retrieve_evaluate_multiple_configs(self, configs: List[RAGConfiguration]):
+        """
+        Enhanced method to evaluate multiple configurations and generate a consolidated report.
+
+        Args:
+            configs: List of RAGConfiguration objects to evaluate
+
+        Returns:
+            Summary of evaluation results across all configurations
+        """
+        print(f"⏱️  Starting retrieval/evaluation for {len(configs)} configurations")
+
+        # Clear any previous metrics
+        self.evaluation_service.clear_metrics()
+
+        # Process each configuration
+        for i, config in enumerate(configs, 1):
+            print(f"\n--- Processing configuration {i}/{len(configs)}: {config.collection_name} ---")
+
+            # Use the evaluation service with injected retrieval function
+            self.evaluation_service.evaluate_retrieval_results(
+                config=config,
+                retrieval_function=self._create_retrieval_function()
+            )
+
+        # Generate consolidated reports for all configurations
+        print(f"\n--- Generating consolidated reports for all {len(configs)} configurations ---")
+        self.evaluation_service.generate_reports_with_multiple_configs(configs)
 
         # Return summary for programmatic access
         return self.evaluation_service.get_metrics_summary()
@@ -121,3 +153,12 @@ class DocumentRetrievalService(RetrievalService):
     def clear_evaluation_metrics(self):
         """Clear accumulated evaluation metrics"""
         self.evaluation_service.clear_metrics()
+
+    def set_report_configuration_mappings(self, config_mappings: dict):
+        """
+        Set configuration mappings for enhanced reporting.
+
+        Args:
+            config_mappings: Dictionary mapping configuration_id to config details
+        """
+        self.evaluation_service.report_generator.set_configuration_mappings(config_mappings)

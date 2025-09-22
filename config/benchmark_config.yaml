@@ -52,7 +52,7 @@ vector_database:
 
 evaluation:
   dataset_path: "../data/MrWolf_datasetdomande_IngMan.xlsm"
-  report_path: "../report"
+  report_path: "../../report"
 
 
 

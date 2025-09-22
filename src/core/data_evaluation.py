@@ -161,8 +161,14 @@ class EvaluationService:
         )
 
     def generate_reports(self, config: RAGConfiguration):
-        """Generate comprehensive evaluation reports with dual-level metrics"""
+        """Generate comprehensive evaluation reports with dual-level metrics and configuration mapping"""
         report_name = f"evaluation_{config.collection_name}"
+
+        # Create configuration mapping for this specific config
+        config_mappings = self._create_configuration_mappings([config])
+
+        # Set the configuration mappings in the report generator
+        self.report_generator.set_configuration_mappings(config_mappings)
 
         try:
             report_files = self.report_generator.generate_comprehensive_report(
@@ -177,6 +183,7 @@ class EvaluationService:
             if 'excel' in report_files:
                 print(f"\n  Excel file contains specialized dual-level sheets:")
                 print(f"    • Executive Summary (5-column comparison structure)")
+                print(f"    • Configuration Mapping (embedder, search, chunking details)")
                 print(f"    • Detailed Metrics (document vs section performance)")
                 print(f"    • Configuration Comparison (dual-level charts)")
                 print(f"    • Search Type Analysis • Query Analysis • Performance Ranking")
@@ -187,6 +194,76 @@ class EvaluationService:
             print(f"Error generating reports: {e}")
             import traceback
             traceback.print_exc()
+
+    def generate_reports_with_multiple_configs(self, configs: List[RAGConfiguration]):
+        """Generate comprehensive evaluation reports for multiple configurations"""
+        report_name = f"evaluation_multi_config"
+
+        # Create configuration mapping for all configs
+        config_mappings = self._create_configuration_mappings(configs)
+
+        # Set the configuration mappings in the report generator
+        self.report_generator.set_configuration_mappings(config_mappings)
+
+        try:
+            report_files = self.report_generator.generate_comprehensive_report(
+                self.metrics_aggregator,
+                report_name
+            )
+
+            print("\nGenerated dual-level evaluation reports for multiple configurations:")
+            for report_type, file_path in report_files.items():
+                print(f"  - {report_type.upper()}: {file_path}")
+
+            if 'excel' in report_files:
+                print(f"\n  Excel file contains:")
+                print(f"    • Configuration Mapping ({len(config_mappings)} configurations)")
+                print(f"    • Comprehensive dual-level analysis across all configurations")
+
+            self._print_evaluation_summary()
+
+        except Exception as e:
+            print(f"Error generating reports: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _create_configuration_mappings(self, configs: List[RAGConfiguration]) -> dict:
+        """
+        Create configuration mappings from RAGConfiguration objects.
+
+        Args:
+            configs: List of RAGConfiguration objects
+
+        Returns:
+            Dictionary mapping configuration_id to configuration details
+        """
+        config_mappings = {}
+
+        for config in configs:
+            for search_config in config.search_configs:
+                # Generate the same configuration ID as used in metrics
+                configuration_id = self.metrics_calculator.generate_configuration_id(
+                    search_config.search_type, config
+                )
+
+                # Extract embedder model name
+                embedder_name = config.model_manager.config.get('embedding_model_name', 'Unknown')
+
+                # Extract search strategy name
+                search_strategy = search_config.search_type.name.lower().replace('_', ' ')
+
+                # Extract chunking strategy name
+                chunking_strategy = getattr(config.chunking, 'name', 'Unknown')
+                if hasattr(config.chunking, '_name'):
+                    chunking_strategy = config.chunking._name
+
+                config_mappings[configuration_id] = {
+                    'embedder': embedder_name,
+                    'search_strategy': search_strategy,
+                    'chunking_strategy': chunking_strategy
+                }
+
+        return config_mappings
 
     def _print_evaluation_summary(self):
         """Print a comprehensive summary of dual-level evaluation results to console"""
