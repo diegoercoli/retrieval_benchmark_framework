@@ -117,6 +117,9 @@ def process_dataset(dataset_path: Path) -> pd.DataFrame:
     # Drop the intermediate columns and keep only the final three
     final_df = final_df[['complexity', 'question', 'ground_truth']]
 
+    #put finald_df['question'] as lowecase string
+    final_df['question'] = final_df['question'].str.lower()
+
     return final_df
 
 # Example usage:

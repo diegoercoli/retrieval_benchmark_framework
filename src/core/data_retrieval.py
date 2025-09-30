@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 import time
-from src.core.configuration import RAGConfiguration, SearchType, SearchConfiguration
+from src.core.configuration import RAGConfiguration, SearchType, SearchConfiguration, EvaluationConfiguration
 from src.core.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
 from src.core.data_evaluation import EvaluationService
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
@@ -28,10 +28,10 @@ class RetrievalService(ABC):
 
 class DocumentRetrievalService(RetrievalService):
 
-    def __init__(self, db_manager: WeaviateDBManager):
+    def __init__(self, db_manager: WeaviateDBManager, evaluationConfiguration: EvaluationConfiguration):
         self.db_manager = db_manager
         # Use the new dual-level evaluation service
-        self.evaluation_service = EvaluationService()
+        self.evaluation_service = EvaluationService(evaluationConfiguration)
 
     def retrieve_evaluate(self, config: RAGConfiguration):
         """Enhanced retrieve and evaluate method using dual-level evaluation service."""

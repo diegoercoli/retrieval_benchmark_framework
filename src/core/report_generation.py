@@ -16,22 +16,22 @@ from openpyxl.chart import BarChart, Reference, LineChart
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 from src.core.metrics import MetricsAggregator, QueryEvaluationMetrics
-from src.core.configuration import SearchType
+from src.core.configuration import SearchType, EvaluationConfiguration
 
 
 class BenchmarkReportGenerator:
     """Generate comprehensive benchmark reports in various formats with configuration mapping"""
 
-    def __init__(self, report_dir: Path = Path("report")):
+    def __init__(self, evaluation_configuration: EvaluationConfiguration):
         """
         Initialize report generator.
 
         Args:
             report_dir: Directory where reports will be saved (default: 'report')
         """
-        self.report_dir = Path(report_dir)
+        self.report_dir = evaluation_configuration.report_path_with_timestamp #/ datetime.now().strftime("%Y%m%d_%H%M%S")
         self.report_dir.mkdir(parents=True, exist_ok=True)
-        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.timestamp = evaluation_configuration.timestamp #.strftime("%Y%m%d_%H%M%S")
         # Store configuration mappings for use across report generation
         self.configuration_mappings = {}
 

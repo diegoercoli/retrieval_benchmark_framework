@@ -6,14 +6,41 @@ from typing import Dict, Any, Optional
 import torch
 from sentence_transformers import SentenceTransformer
 
+from src.utils.proxy_helper import set_proxy_authentication
+
 
 class FlagReranker:
+    """
+    A class representing a reranker model for scoring query-document pairs.
+
+    Attributes:
+        model_name (str): The name of the reranker model.
+        cache_dir (str): The directory where the model is cached. Defaults to '.models/'.
+        use_fp16 (bool): Whether to use FP16 precision for the model. Defaults to True.
+    """
     def __init__(self, model_name: str, cache_dir: str = '.models/', use_fp16: bool = True):
+        """
+        Initialize the FlagReranker with the specified model name, cache directory, and precision setting.
+
+        Args:
+            model_name (str): The name of the reranker model.
+            cache_dir (str, optional): The directory where the model is cached. Defaults to '.models/'.
+            use_fp16 (bool, optional): Whether to use FP16 precision for the model. Defaults to True.
+        """
         self.model_name = model_name
         self.cache_dir = cache_dir
         self.use_fp16 = use_fp16
 
     def compute_score(self, pairs):
+        """
+        Compute scores for a list of query-document pairs.
+
+        Args:
+            pairs (list): A list of tuples, where each tuple contains a query and a document.
+
+        Returns:
+            list: A list of scores, one for each query-document pair. Currently returns a placeholder score of 0.5.
+        """
         # Placeholder implementation
         return [0.5] * len(pairs)
 
@@ -80,6 +107,9 @@ class ModelManager:
 
             device = self._determine_device()
 
+            # enable proxy authentication
+            set_proxy_authentication()
+
             self._embedding_model = SentenceTransformer(
                 self.config['embedding_model_name'],
                 cache_folder=self.config['cache_dir'],
@@ -110,7 +140,7 @@ class ModelManager:
         try:
             print(f"Initializing reranker model: {self.config['reranker_model_name']}")
             start_time = time.time()
-
+            set_proxy_authentication()
             self._reranker = FlagReranker(
                 self.config['reranker_model_name'],
                 cache_dir=self.config['cache_dir'],

@@ -1,6 +1,6 @@
 from datetime import datetime
 from pathlib import Path
-
+import sys
 import yaml
 from flask import Flask, request, jsonify
 import threading
@@ -231,7 +231,6 @@ if __name__ == "__main__":
     Or with custom config:
         python src/vectordb/old/embedding_service.py --config path/to/config.yaml
     """
-    import sys
 
     # Check for custom config path argument
     config_path = "../../config/benchmark_config.yaml"  # default

@@ -19,10 +19,31 @@ class SearchConfiguration:
     top_k: int
     alpha: float
 
-@dataclass
+from datetime import datetime
+
 class EvaluationConfiguration:
-    dataset_path: Path
-    report_path: Path
+    """
+    Configuration for evaluation, including dataset and report paths.
+
+    Attributes:
+        dataset_path (Path): Path to the dataset.
+        report_path (Path): Path to the report directory.
+        timestamp (str): Local timestamp set at instantiation.
+    """
+    def __init__(self, dataset_path: Path, report_path: Path):
+        self.dataset_path = dataset_path
+        self.report_path = report_path
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    @property
+    def report_path_with_timestamp(self) -> Path:
+        """
+        Returns the report path joined with the timestamp.
+
+        Returns:
+            Path: The report path with the timestamp appended.
+        """
+        return self.report_path / self.timestamp
 
 @dataclass
 class RAGConfiguration:
