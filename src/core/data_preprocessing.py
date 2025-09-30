@@ -105,7 +105,9 @@ class BaseParser(ABC):
 
     def __export_to_json(self, doc:DoclingDocument) -> bool:
         json_output = doc.model_dump_json()
-        json_filename = self._parsed_docx_folder / f"{doc.name}.json"
+        #remove in doc.name substring "FIXED" if present
+        name = doc.name.replace("_FIXED","")
+        json_filename = self._parsed_docx_folder / f"{name}.json"
         try:
             with open(json_filename, "w", encoding='utf-8') as f:
                 f.write(json_output)

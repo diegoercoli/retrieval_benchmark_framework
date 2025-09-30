@@ -1,7 +1,7 @@
 from typing import List
 from pathlib import Path
 
-from src.core.configuration import RAGConfiguration, SearchConfiguration
+from src.core.configuration import RAGConfiguration, SearchConfiguration, EvaluationConfiguration
 from src.core.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
 from src.core.metrics import (
     RetrievalMetricsCalculator,
@@ -26,10 +26,10 @@ class EvaluationService:
     - Uses all 50 chunks for NDCG and MRR calculations
     """
 
-    def __init__(self):
+    def __init__(self, evaluation_configuration: EvaluationConfiguration):
         self.metrics_aggregator = MetricsAggregator()
         self.metrics_calculator = RetrievalMetricsCalculator()
-        self.report_generator = BenchmarkReportGenerator()
+        self.report_generator = BenchmarkReportGenerator(evaluation_configuration)
 
     def evaluate_retrieval_results(
             self,

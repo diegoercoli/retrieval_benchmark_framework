@@ -39,8 +39,6 @@ class CustomChunker(HybridChunker):
     def name(self) -> str:
         return self._name
 
-
-
     def __filter_chapter(self, chunk: CustomChunk) -> bool:
         """Return True if the chunk should be filtered out based on blacklist."""
         if not chunk.meta.chapter:
@@ -91,4 +89,6 @@ class CustomChunker(HybridChunker):
         if isinstance(chunk, CustomChunk):
             items.append(chunk.get_context_string())
         items.append(chunk.text)
+        #make all the text to be returned in lowercase
+        items = [item.lower() for item in items if item]
         return self.delim.join(items)

@@ -1,72 +1,169 @@
-from typing import List
+import os
+import logging
+from typing import List, Optional
 from tqdm import tqdm
-from weaviate.classes.config import Configure, Property, DataType
 import weaviate
+from weaviate.collections.classes.config import Configure, Property, DataType
+from weaviate.collections.classes.filters import Filter
 from weaviate.util import generate_uuid5
-from weaviate.classes.query import (
-    Filter,
-    Rerank
-)
-from src.chunking.CustomChunk import CustomChunk
+
+from src.utils.proxy_helper import set_no_proxy_localhost
+
+# Suppress Weaviate/httpx INFO logs about authentication checks
+logging.getLogger("weaviate").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 class WeaviateDBManager:
+    """
+    Weaviate Database Manager with context manager support for efficient connection handling.
 
-    def __init__(self, port: int, grpc_port: int, inference_url: str):
-        print(f"##############INFERENCE_URL: {inference_url}")
+    Usage:
+        # As context manager (recommended)
+        with WeaviateDBManager(port=8081, grpc_port=50051, inference_url="http://...") as db:
+            db.create_collection(...)
+            db.semantic_search_retrieve(...)
+
+        # Manual connection management
+        db = WeaviateDBManager(port=8081, grpc_port=50051, inference_url="http://...")
+        db.connect()
+        try:
+            db.create_collection(...)
+        finally:
+            db.close()
+    """
+
+    def __init__(self, port: int, grpc_port: int, inference_url: str, auto_connect: bool = False):
+        """
+        Initialize WeaviateDBManager.
+
+        Args:
+            port: Weaviate HTTP port
+            grpc_port: Weaviate gRPC port
+            inference_url: URL for inference service
+            auto_connect: If True, connect immediately on initialization
+        """
+        print(f"Initializing WeaviateDBManager with inference_url: {inference_url}")
         self.port = port
         self.grpc_port = grpc_port
         self.inference_url = inference_url
+        self._client: Optional[weaviate.WeaviateClient] = None
+        self._is_connected = False
 
-    def __connect(self):
-        return weaviate.connect_to_local(port=self.port, grpc_port=self.grpc_port)
+        if auto_connect:
+            self.connect()
 
-    def __close(self, client):
-        """Close the Weaviate client connection."""
-        client.close()
+    def __enter__(self):
+        """Context manager entry - establish connection"""
+        self.connect()
+        return self
 
-    def __collection_exists(self, client, collection_name: str) -> bool:
-        return client.collections.exists(collection_name)
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - close connection"""
+        self.close()
+        return False  # Don't suppress exceptions
 
-    def __delete_collection(self, client, collection_name: str):
-        return client.collections.delete(collection_name)
+    def connect(self):
+        """Establish connection to Weaviate"""
+        if self._is_connected and self._client is not None:
+            print("Already connected to Weaviate")
+            return self._client
+
+        try:
+            print(f"Connecting to Weaviate DB using port={self.port}, grpc_port={self.grpc_port}")
+            set_no_proxy_localhost()
+            # Connect with skip_init_checks to avoid authentication warnings
+            self._client = weaviate.connect_to_local(
+                port=self.port,
+                grpc_port=self.grpc_port,
+                skip_init_checks=True  # Skip OIDC and other init checks
+            )
+            self._is_connected = True
+            print("✓ Successfully connected to Weaviate")
+            return self._client
+        except Exception as e:
+            print(f"✗ Failed to connect to Weaviate: {e}")
+            self._is_connected = False
+            raise
+
+    def close(self):
+        """Close connection to Weaviate"""
+        if self._client is not None and self._is_connected:
+            try:
+                self._client.close()
+                print("✓ Weaviate connection closed")
+            except Exception as e:
+                print(f"⚠ Error closing connection: {e}")
+            finally:
+                self._client = None
+                self._is_connected = False
+
+    def __del__(self):
+        """Destructor - ensure connection is closed"""
+        self.close()
+
+    @property
+    def client(self) -> weaviate.WeaviateClient:
+        """Get the Weaviate client, ensuring connection is established"""
+        if not self._is_connected or self._client is None:
+            raise RuntimeError("Not connected to Weaviate. Call connect() or use context manager.")
+        return self._client
+
+    def is_connected(self) -> bool:
+        """Check if connected to Weaviate"""
+        return self._is_connected and self._client is not None
 
     def collection_exists(self, collection_name: str) -> bool:
-        """Public method to check if collection exists"""
-        client = self.__connect()
-        try:
-            return self.__collection_exists(client, collection_name)
-        finally:
-            self.__close(client)
+        """Check if a collection exists"""
+        return self.client.collections.exists(collection_name)
 
     def delete_collection(self, collection_name: str) -> bool:
-        """Public method to delete collection"""
-        client = self.__connect()
-        try:
-            return self.__delete_collection(client, collection_name)
-        finally:
-            self.__close(client)
+        """Delete a collection"""
+        if not self.collection_exists(collection_name):
+            print(f"Collection '{collection_name}' does not exist")
+            return False
+        self.client.collections.delete(collection_name)
+        print(f"✓ Deleted collection '{collection_name}'")
+        return True
 
-    def create_collection(self, collection_name: str, chunks: List[CustomChunk], overwrite=False) -> bool:
-        client = self.__connect()
+    def create_collection(self,
+                          collection_name: str,
+                          chunks: List,
+                          all_fields: list,
+                          embedding_field: str,
+                          overwrite: bool = False) -> bool:
+        """
+        Create a collection and insert chunks.
+
+        Args:
+            collection_name: Name of the collection to create
+            chunks: List of chunk objects with to_dict() method
+            all_fields: List of all field names
+            embedding_field: Field to use for embeddings
+            overwrite: If True, delete existing collection before creating
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if all_fields is None:
+            all_fields = []
+
         try:
-            exist = self.__collection_exists(client, collection_name)
+            exist = self.collection_exists(collection_name)
             if not overwrite and exist:
+                print(f"Collection '{collection_name}' already exists and overwrite=False")
                 return False
-            if exist:
-                self.__delete_collection(client, collection_name)
 
-            # Get all fields from CustomChunk
-            all_fields = CustomChunk.get_fields()
+            if exist:
+                print(f"Deleting existing collection '{collection_name}'...")
+                self.delete_collection(collection_name)
 
             # Determine which fields should be used for embedding
-            # Assuming 'text' is the main content field for embedding
-            # and other fields are metadata
-            embedding_fields = ["text"]  # Modify this based on your needs
+            embedding_fields = [embedding_field]
 
             vectorizer_config = [Configure.NamedVectors.text2vec_transformers(
                 name="vector",
-                source_properties=embedding_fields,  # Only text field used for embedding
+                source_properties=embedding_fields,
                 vectorize_collection_name=False,
                 inference_url=self.inference_url,
             )]
@@ -75,172 +172,152 @@ class WeaviateDBManager:
             properties = []
             for field in all_fields:
                 if field in embedding_fields:
-                    # Fields used for embedding
                     properties.append(
                         Property(name=field, vectorize_property_name=True, data_type=DataType.TEXT)
                     )
                 else:
-                    # Metadata fields (not used for embedding)
                     properties.append(
                         Property(name=field, vectorize_property_name=False, data_type=DataType.TEXT)
                     )
 
-            collection = client.collections.create(
+            print(f"Creating collection '{collection_name}'...")
+            collection = self.client.collections.create(
                 name=collection_name,
                 vectorizer_config=vectorizer_config,
                 reranker_config=Configure.Reranker.transformers(),
                 properties=properties
             )
 
-            # Set up a batch process with specified fixed size and concurrency
+            # Batch insert chunks
+            print(f"Inserting {len(chunks)} chunks...")
             with collection.batch.fixed_size(batch_size=50, concurrent_requests=2) as batch:
-                # Iterate over a subset of the dataset
-                for chunk in tqdm(chunks):
-                    # Generate a UUID based on the chunk content
+                for chunk in tqdm(chunks, desc="Inserting chunks"):
                     chunk_dict = chunk.to_dict()
                     uuid = generate_uuid5(chunk_dict)
+                    batch.add_object(properties=chunk_dict, uuid=uuid)
 
-                    # Add the object to the batch with properties and UUID.
-                    batch.add_object(
-                        properties=chunk_dict,
-                        uuid=uuid,
-                    )
+            print(f"✓ Successfully created collection '{collection_name}' with {len(chunks)} chunks")
             return True
-        finally:
-            self.__close(client)
 
-    def filter_by_metadata(self, metadata_property: str,
+        except Exception as e:
+            print(f"✗ Error creating collection: {e}")
+            raise
+
+    def filter_by_metadata(self,
+                           metadata_property: str,
                            values: list[str],
                            collection_name: str,
                            limit: int = 5) -> list:
         """
-        Retrieves objects from a specified collection based on metadata filtering criteria.
-
-        This function queries a collection within the specified client to fetch objects that match
-        certain metadata criteria. It uses a filter to find objects whose specified 'property' contains
-        any of the given 'values'. The number of objects retrieved is limited by the 'limit' parameter.
+        Retrieve objects from a collection based on metadata filtering.
 
         Args:
-        metadata_property (str): The name of the metadata property to filter on.
-        values (List[str]): A list of values to be matched against the specified property.
-        collection_name (str): The name of the collection to query.
-        limit (int, optional): The maximum number of objects to retrieve. Defaults to 5.
+            metadata_property: The metadata property to filter on
+            values: List of values to match against the property
+            collection_name: Name of the collection to query
+            limit: Maximum number of objects to retrieve
 
         Returns:
-        List[dict]: A list of object properties from the collection that match the filtering criteria.
+            List of object properties matching the filter criteria
         """
-        client = self.__connect()
-        try:
-            if not self.__collection_exists(client, collection_name):
-                raise Exception(f"Collection '{collection_name}' does not exist.")
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
 
-            collection = client.collections.get(collection_name)
+        collection = self.client.collections.get(collection_name)
 
-            # Retrieve using collection.query.fetch_objects
-            response = collection.query.fetch_objects(
-                limit=limit,
-                filters=Filter.by_property(metadata_property).contains_any(values)
-            )
+        response = collection.query.fetch_objects(
+            limit=limit,
+            filters=Filter.by_property(metadata_property).contains_any(values)
+        )
 
-            response_objects = [x.properties for x in response.objects]
-            return response_objects
-        finally:
-            self.__close(client)
+        return [x.properties for x in response.objects]
 
-    def semantic_search_retrieve(self, query: str,
+    def semantic_search_retrieve(self,
+                                 query: str,
                                  collection_name: str,
                                  top_k: int = 5) -> list:
         """
-        Performs a semantic search on a collection and retrieves the top relevant chunks.
-
-        This function executes a semantic search query on a specified collection to find text chunks
-        that are most relevant to the input 'query'. The search retrieves a limited number of top
-        matching objects, as specified by 'top_k'. The function returns the properties of
-        each of the top matching objects.
+        Perform semantic search on a collection.
 
         Args:
-        query (str): The search query used to find relevant text chunks.
-        collection_name (str): The name of the collection in which the semantic search is performed.
-        top_k (int, optional): The number of top relevant objects to retrieve. Defaults to 5.
+            query: Search query for semantic matching
+            collection_name: Name of the collection to search
+            top_k: Number of top results to retrieve
 
         Returns:
-        List[dict]: A list of object properties that are most relevant to the given query.
+            List of object properties most relevant to the query
         """
-        client = self.__connect()
-        try:
-            if not self.__collection_exists(client, collection_name):
-                raise Exception(f"Collection '{collection_name}' does not exist.")
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
 
-            collection = client.collections.get(collection_name)
+        collection = self.client.collections.get(collection_name)
+        response = collection.query.near_text(query=query, limit=top_k)
 
-            # Retrieve using collection.query.near_text
-            response = collection.query.near_text(query=query, limit=top_k)
+        return [x.properties for x in response.objects]
 
-            response_objects = [x.properties for x in response.objects]
-            return response_objects
-        finally:
-            self.__close(client)
-
-    def bm25_retrieve(self, query: str,
+    def bm25_retrieve(self,
+                      query: str,
                       collection_name: str,
                       top_k: int = 5) -> list:
         """
-        Performs a BM25 search on a collection and retrieves the top relevant chunks.
-
-        This function executes a BM25 search query on a specified collection to find text chunks
-        that are most relevant to the input 'query'. The search retrieves a limited number of top
-        matching objects, as specified by 'top_k'. The function returns the properties of
-        each of the top matching objects.
+        Perform BM25 search on a collection.
 
         Args:
-        query (str): The search query used to find relevant text chunks.
-        collection_name (str): The name of the collection in which the BM25 search is performed.
-        top_k (int, optional): The number of top relevant objects to retrieve. Defaults to 5.
+            query: Search query for keyword matching
+            collection_name: Name of the collection to search
+            top_k: Number of top results to retrieve
 
         Returns:
-        List[dict]: A list of object properties that are most relevant to the given query.
+            List of object properties most relevant to the query
         """
-        client = self.__connect()
-        try:
-            if not self.__collection_exists(client, collection_name):
-                raise Exception(f"Collection '{collection_name}' does not exist.")
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
 
-            collection = client.collections.get(collection_name)
+        collection = self.client.collections.get(collection_name)
+        response = collection.query.bm25(query=query, limit=top_k)
 
-            # Retrieve using collection.query.bm25
-            response = collection.query.bm25(query=query, limit=top_k)
+        return [x.properties for x in response.objects]
 
-            response_objects = [x.properties for x in response.objects]
-            return response_objects
-        finally:
-            self.__close(client)
-
-    def hybrid_search(self, query: str,
+    def hybrid_search(self,
+                      query: str,
                       collection_name: str,
                       top_k: int = 5,
-                      alpha: float = 0.5)-> list:
+                      alpha: float = 0.5) -> list:
         """
-        Performs a hybrid search combining semantic search with BM25.
+        Perform hybrid search combining semantic search with BM25.
 
         Args:
-        query (str): The search query for semantic matching.
-        collection_name (str): The name of the collection to search.
-        alpha (float): The weight between semantic (0.0) and BM25 (1.0) search. Default 0.5.
-        top_k (int): Number of results to return.
+            query: Search query for matching
+            collection_name: Name of the collection to search
+            top_k: Number of results to return
+            alpha: Weight between semantic (0.0) and BM25 (1.0). Default 0.5
 
         Returns:
-        List[dict]: List of matching object properties.
+            List of matching object properties
         """
-        client = self.__connect()
-        try:
-            if not self.__collection_exists(client, collection_name):
-                raise Exception(f"Collection '{collection_name}' does not exist.")
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
 
-            collection = client.collections.get(collection_name)
+        collection = self.client.collections.get(collection_name)
+        response = collection.query.hybrid(query=query, alpha=alpha, limit=top_k)
 
-            response = collection.query.hybrid(query=query, alpha=alpha, limit=top_k)
+        return [x.properties for x in response.objects]
 
-            response_objects = [x.properties for x in response.objects]
-            return response_objects
-        finally:
-            self.__close(client)
+    def get_collection_count(self, collection_name: str) -> int:
+        """
+        Get the total number of objects in a collection.
+
+        Args:
+            collection_name: Name of the collection
+
+        Returns:
+            Number of objects in the collection
+        """
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
+
+        collection = self.client.collections.get(collection_name)
+        # Use aggregate to get count
+        result = collection.aggregate.over_all(total_count=True)
+        return result.total_count
+

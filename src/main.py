@@ -41,7 +41,6 @@ def main():
             print(f"Skipped {len(skipped_files)} files: {skipped_files}")
         else:
             print("All documents processed successfully")
-
         # Run the complete benchmarking pipeline
         print("Starting benchmark factory...")
         benchmark_factory = BenchmarkFactory(config_path)

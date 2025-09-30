@@ -37,11 +37,29 @@ class DocumentIngestionService(IngestionService):
 
     # This is not required, but makes the intent clear
 
-    def process(self, config: RAGConfiguration) -> int:
-        """Your core business logic for document ingestion"""
-        if self.db_manager.collection_exists(config.collection_name):
-            print(f"Collection '{config.collection_name}' already exists.")
-            return 0
+    def process(self, config: RAGConfiguration, overwrite=False) -> int:
+        """
+        Core business logic for document ingestion.
+
+        Args:
+            config (RAGConfiguration): RAG configuration containing chunk size, embedding model, etc.
+            overwrite (bool): If True, overwrite existing collection; if False, skip if collection exists.
+
+        Returns:
+            int: Number of items/chunks processed and stored.
+
+        Raises:
+            Exception: If processing fails.
+        """
+
+       # if self.db_manager.collection_exists(config.collection_name):
+       #     if not overwrite:
+       #         print(f"Collection '{config.collection_name}' already exists. Skipping ingestion.")
+       #         return 0
+       #     else:
+       #         print(f"Collection '{config.collection_name}' already exists. Overwriting.")
+       #         self.db_manager.delete_collection(config.collection_name)
+
         # Your business logic here:
         # 1. Read files from filesystem based on source
         # Start timer
@@ -61,12 +79,15 @@ class DocumentIngestionService(IngestionService):
             #store chunks
             file_path = config.main_folder / "chunks" / f"{docling_doc.name}.md"
             self.store_chunks(enriched_chunks, file_path)
-        # Create collection with all chunks at once
         if all_chunks:
-            self.db_manager.create_collection(config.collection_name, all_chunks, overwrite=True)
-        #ingestion_time = time.time() - start_time
-       # print(            f"⏱️  Ingestion completed for '{config.collection_name}' in {ingestion_time:.2f} seconds ({len(all_chunks)} chunks)")
-        return len(all_chunks)
+            self.db_manager.create_collection(config.collection_name, all_chunks, CustomChunk.get_fields(), "text",
+                                              overwrite=True)
+
+        count = self.db_manager.get_collection_count(config.collection_name)
+        print(f"Document count: {count}")
+        # ingestion_time = time.time() - start_time
+        # print(            f"⏱️  Ingestion completed for '{config.collection_name}' in {ingestion_time:.2f} seconds ({len(all_chunks)} chunks)")
+        return count
 
     def store_chunks(self, chunks: List[CustomChunk] ,filepath: Path):
         with open(filepath, "w", encoding="utf-8") as f:

@@ -1,4 +1,9 @@
-import threading
+"""
+benchmark_factory.py
+
+Refactored BenchmarkFactory with extracted pipeline execution logic.
+"""
+
 import time
 from pathlib import Path
 from typing import List
@@ -8,12 +13,12 @@ from transformers import AutoTokenizer
 
 from src.core.configuration import RAGConfiguration, SearchConfiguration, SearchType, EvaluationConfiguration
 from src.core.model_manager import ModelManager
-from src.core.data_ingestion import DocumentIngestionService
-from src.core.data_retrieval import DocumentRetrievalService
 from src.utils.docling_utils import MDTableSerializerProvider
+from src.utils.proxy_helper import set_proxy_authentication
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
 from src.chunking.CustomChunker import CustomChunker
 from src.vectordb.embedding_service import start_server
+from src.core.pipeline_runner import PipelineRunner, PipelineExecutionStrategy
 
 
 class BenchmarkFactory:
@@ -24,14 +29,21 @@ class BenchmarkFactory:
     1. Loads configuration from YAML
     2. Starts embedding/reranking servers
     3. Creates different RAG configurations for benchmarking
-    4. Runs ingestion and evaluation pipelines
+    4. Delegates pipeline execution to PipelineRunner
     5. Generates enhanced reports with configuration mapping
+
+    Responsibilities:
+    - Configuration management
+    - RAG configuration creation
+    - Server bootstrapping
+    - Pipeline coordination (delegated to PipelineRunner)
     """
 
     def __init__(self, yaml_file: Path):
         self.config = self._load_config(yaml_file)
         self.embedding_server_thread = None
         self.rag_configurations = []  # Store all created configurations for reporting
+        self.pipeline_runner = None  # Will be initialized after DB manager creation
 
     def _load_config(self, yaml_file: Path) -> dict:
         """Load and validate YAML configuration"""
@@ -49,16 +61,22 @@ class BenchmarkFactory:
 
         return config
 
-    def start(self):
-        """Main entry point to start the benchmarking process with enhanced reporting"""
+    def start(self, execution_strategy: str = 'consolidated'):
+        """
+        Main entry point to start the benchmarking process with enhanced reporting.
+
+        Args:
+            execution_strategy: Either 'individual' or 'consolidated' (default)
+        """
         print("Starting RAG benchmark factory...")
 
         # Step 1: Bootstrap embedding server (commented out as per original)
         # if not self._bootstrap_embedding_server():
         #    raise RuntimeError("Failed to start embedding server")
 
-        # Step 2: Create database manager
+        # Step 2: Create database manager and pipeline runner
         db_manager = self._create_db_manager()
+        self.pipeline_runner = PipelineRunner(db_manager)
 
         # Step 3: Create RAG configurations for different combinations
         rag_configs = self._create_RAG_configurations()
@@ -66,93 +84,27 @@ class BenchmarkFactory:
 
         print(f"Created {len(rag_configs)} RAG configurations to benchmark")
 
-        # Step 4: Option A - Run pipelines individually (original approach)
-        # self._run_individual_pipelines(rag_configs, db_manager)
-
-        # Step 4: Option B - Run pipelines with consolidated reporting (enhanced approach)
-        self._run_pipelines_with_consolidated_reporting(rag_configs, db_manager)
+        # Step 4: Execute pipelines using the specified strategy
+        self._execute_pipelines(rag_configs, execution_strategy)
 
         print("All benchmark pipelines completed with enhanced reporting!")
 
-    def _run_individual_pipelines(self, rag_configs: List[RAGConfiguration], db_manager: WeaviateDBManager):
-        """Run pipelines individually (original approach)"""
-        threads = []
-        for i, rag_config in enumerate(rag_configs):
-            print(f"Starting pipeline {i + 1}/{len(rag_configs)}: {rag_config.collection_name}")
+    def _execute_pipelines(self, rag_configs: List[RAGConfiguration], strategy: str):
+        """
+        Execute pipelines using the specified strategy.
 
-            # Create thread for each configuration
-            thread = threading.Thread(
-                target=self._run_pipeline,
-                args=(rag_config, db_manager),
-                name=f"Pipeline-{rag_config.collection_name}"
-            )
-            threads.append(thread)
-            thread.start()
+        Args:
+            rag_configs: List of RAG configurations to benchmark
+            strategy: Execution strategy ('individual' or 'consolidated')
+        """
+        # Get the strategy method name
+        strategy_method_name = PipelineExecutionStrategy.get_strategy(strategy)
 
-            # Optional: Add small delay between thread starts to avoid resource contention
-            time.sleep(1)
+        # Get the actual method from the pipeline runner
+        strategy_method = getattr(self.pipeline_runner, strategy_method_name)
 
-        # Wait for all threads to complete
-        for thread in threads:
-            thread.join()
-
-    def _run_pipelines_with_consolidated_reporting(self, rag_configs: List[RAGConfiguration],
-                                                   db_manager: WeaviateDBManager):
-        """Run pipelines with consolidated reporting across all configurations"""
-
-        # Step 1: Run ingestion for all configurations
-        print("\n=== INGESTION PHASE ===")
-        for i, rag_config in enumerate(rag_configs):
-            print(f"Running ingestion {i + 1}/{len(rag_configs)}: {rag_config.collection_name}")
-            ingestion_service = DocumentIngestionService(db_manager)
-            processed_count = ingestion_service.process(rag_config)
-            print(f"Ingested {processed_count} chunks for {rag_config.collection_name}")
-
-        # Step 2: Run evaluation for all configurations with consolidated reporting
-        print(f"\n=== EVALUATION PHASE ===")
-        retrieval_service = DocumentRetrievalService(db_manager)
-        evaluation_summary = retrieval_service.retrieve_evaluate_multiple_configs(rag_configs)
-
-        # Step 3: Print final summary
-        self._print_final_summary(evaluation_summary, len(rag_configs))
-
-    def _print_final_summary(self, evaluation_summary: dict, num_configs: int):
-        """Print final summary of all evaluations"""
-        print(f"\n" + "=" * 100)
-        print(f"🏁 BENCHMARK FACTORY COMPLETED - FINAL SUMMARY")
-        print(f"=" * 100)
-        print(f"📊 Configurations evaluated: {num_configs}")
-        print(f"📋 Total queries processed: {evaluation_summary.get('total_queries', 0)}")
-
-        if evaluation_summary.get('best_configurations'):
-            print(f"\n🏆 OVERALL BEST PERFORMERS:")
-            best_configs = evaluation_summary.get('best_configurations', {})
-
-            # Show top document level performers
-            print(f"\n📄 Document Level Champions:")
-            for metric in ['document_precision', 'document_recall', 'document_f1_score', 'document_ndcg']:
-                if metric in best_configs and best_configs[metric]:
-                    config_id, value = best_configs[metric]
-                    short_config = config_id[:25] + "..." if len(config_id) > 28 else config_id
-                    metric_display = metric.replace('document_', '').replace('_', ' ').title()
-                    print(f"  🥇 {metric_display}: {short_config} ({value:.4f})")
-
-            # Show top section level performers
-            print(f"\n📑 Section Level Champions:")
-            for metric in ['section_precision', 'section_recall', 'section_f1_score', 'section_ndcg']:
-                if metric in best_configs and best_configs[metric]:
-                    config_id, value = best_configs[metric]
-                    short_config = config_id[:25] + "..." if len(config_id) > 28 else config_id
-                    metric_display = metric.replace('section_', '').replace('_', ' ').title()
-                    print(f"  🥇 {metric_display}: {short_config} ({value:.4f})")
-
-        print(f"\n📁 Reports generated with:")
-        print(f"  • Configuration mapping tables showing embedder, search strategy, and chunking details")
-        print(f"  • Dual-level metrics (document vs section level evaluation)")
-        print(f"  • Enhanced Excel reports with specialized sheets")
-        print(f"  • HTML reports with configuration tables")
-        print(f"  • JSON reports with programmatic access to configuration details")
-        print(f"=" * 100)
+        print(f"Executing pipelines using '{strategy}' strategy...")
+        strategy_method(rag_configs)
 
     def _create_db_manager(self) -> WeaviateDBManager:
         """Create and configure Weaviate database manager"""
@@ -237,6 +189,7 @@ class BenchmarkFactory:
         blacklist_chapters = self.config['chunking'].get('blacklist_chapters', [])
 
         if strategy_name == 'hierarchical':
+            set_proxy_authentication()
             tokenizer = HuggingFaceTokenizer(
                 tokenizer=AutoTokenizer.from_pretrained(embedding_model),
                 max_tokens=chunk_strategy['num_tokens'],  # optional, by default derived from `tokenizer` for HF case
@@ -346,60 +299,6 @@ class BenchmarkFactory:
             print(f"Failed to start embedding server: {e}")
             return False
 
-    def _run_pipeline(self, rag_config: RAGConfiguration, db_manager: WeaviateDBManager):
-        """
-        Execute the complete pipeline for a single RAG configuration:
-        1. Document ingestion (chunking and vector storage)
-        2. Document retrieval and evaluation with dual-level metrics
-        """
-        try:
-            print(f"Starting pipeline for {rag_config.collection_name}")
-
-            # Step 1: Execute Document Ingestion Service
-            print(f"Starting document ingestion for {rag_config.collection_name}")
-            ingestion_start = time.time()
-            ingestion_service = DocumentIngestionService(db_manager)
-
-            # Process documents and store in vector database
-            processed_count = ingestion_service.process(rag_config)
-            ingestion_time = time.time() - ingestion_start
-            print(f"Ingested {processed_count} chunks for {rag_config.collection_name} in {ingestion_time:.2f} seconds")
-
-            # Step 2: Execute Document Retrieval Service with Dual-Level Evaluation
-            print(f"Starting dual-level evaluation for {rag_config.collection_name}")
-            retrieval_start = time.time()
-            retrieval_service = DocumentRetrievalService(db_manager)
-
-            # Run dual-level evaluation against ground truth
-            # This now includes both document-level and section-level metrics
-            evaluation_summary = retrieval_service.retrieve_evaluate(rag_config)
-            retrieval_time = time.time() - retrieval_start
-            print(f"Dual-level evaluation completed for {rag_config.collection_name} in {retrieval_time:.2f} seconds")
-
-            # Print summary of evaluation results
-            if evaluation_summary:
-                print(f"Evaluation Summary for {rag_config.collection_name}:")
-                print(f"  Total queries evaluated: {evaluation_summary.get('total_queries', 0)}")
-
-                best_configs = evaluation_summary.get('best_configurations', {})
-                if best_configs:
-                    print("  Best performers:")
-                    for level in ['document', 'section']:
-                        print(f"    {level.title()} Level:")
-                        for metric in ['precision', 'recall', 'f1_score', 'ndcg']:
-                            key = f'{level}_{metric}'
-                            if key in best_configs and best_configs[key]:
-                                config_id, value = best_configs[key]
-                                print(f"      Best {metric}: {value:.4f}")
-
-            print(f"Pipeline completed for {rag_config.collection_name}")
-
-        except Exception as e:
-            print(f"Pipeline failed for {rag_config.collection_name}: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
-
     def get_configuration_summary(self) -> dict:
         """
         Get a summary of all created configurations for reporting purposes.
@@ -424,3 +323,17 @@ class BenchmarkFactory:
             summary['configurations'].append(config_info)
 
         return summary
+
+    def get_pipeline_runner(self) -> PipelineRunner:
+        """
+        Get the pipeline runner instance.
+
+        Returns:
+            PipelineRunner instance
+
+        Raises:
+            RuntimeError: If called before start() method
+        """
+        if self.pipeline_runner is None:
+            raise RuntimeError("Pipeline runner not initialized. Call start() method first.")
+        return self.pipeline_runner
