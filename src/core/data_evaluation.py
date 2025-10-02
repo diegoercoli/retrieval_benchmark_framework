@@ -43,7 +43,7 @@ class EvaluationService:
             config: RAG configuration
             retrieval_function: Function to retrieve chunks (injected dependency)
         """
-        df_dataset = process_dataset(Path(config.evaluation_configuration.dataset_path))
+        df_dataset = process_dataset(config.evaluation_configuration, config.preprocess_configuration)
 
         print(f"Starting dual-level evaluation for collection: {config.collection_name}")
         print(f"Loaded {len(df_dataset)} queries from dataset")

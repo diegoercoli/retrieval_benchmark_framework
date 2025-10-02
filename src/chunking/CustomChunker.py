@@ -5,8 +5,8 @@ from pydantic import Field
 from docling_core.transforms.chunker import BaseChunk, DocChunk
 from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
 from docling_core.types import DoclingDocument
-
 from src.chunking.CustomChunk import CustomChunk
+from src.core.configuration import PreprocessConfiguration
 
 
 class CustomChunker(HybridChunker):
@@ -14,8 +14,9 @@ class CustomChunker(HybridChunker):
     name: str = Field(default="hierarchical_chunking", alias="name")
     blacklist_chapters: List[str] = Field(default_factory=list)
     processed_chunks: List[CustomChunk] = Field(default_factory=list, init=False)
+    preprocess_configuration: PreprocessConfiguration
 
-    def __init__(self, name: str = "", blacklist_chapters: Optional[List[str]] = None, **args):
+    def __init__(self, name: str = "", blacklist_chapters: Optional[List[str]] = None,  preprocess_configuration: PreprocessConfiguration = None, **args):
         """
         Initialize the custom hierarchical chunker.
 
@@ -28,6 +29,7 @@ class CustomChunker(HybridChunker):
         super().__init__(
             name=name or "hierarchical_chunking",
             blacklist_chapters=blacklist_chapters or [],
+            preprocess_configuration=preprocess_configuration,
             **args
         )
 
@@ -89,6 +91,7 @@ class CustomChunker(HybridChunker):
         if isinstance(chunk, CustomChunk):
             items.append(chunk.get_context_string())
         items.append(chunk.text)
-        #make all the text to be returned in lowercase
-        items = [item.lower() for item in items if item]
+        if self.preprocess_configuration is not None and self.preprocess_configuration.lowercase:
+            #make all the text to be returned in lowercase
+            items = [item.lower() for item in items if item]
         return self.delim.join(items)

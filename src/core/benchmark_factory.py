@@ -3,15 +3,14 @@ benchmark_factory.py
 
 Refactored BenchmarkFactory with extracted pipeline execution logic.
 """
-
 import time
 from pathlib import Path
 from typing import List
 import yaml
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from transformers import AutoTokenizer
-
-from src.core.configuration import RAGConfiguration, SearchConfiguration, SearchType, EvaluationConfiguration
+from src.core.configuration import RAGConfiguration, SearchConfiguration, SearchType, EvaluationConfiguration, \
+    PreprocessConfiguration
 from src.core.model_manager import ModelManager
 from src.utils.docling_utils import MDTableSerializerProvider
 from src.utils.proxy_helper import set_proxy_authentication
@@ -146,7 +145,8 @@ class BenchmarkFactory:
         # Create evaluation configuration
         eval_config = EvaluationConfiguration(
             dataset_path=Path(self.config['evaluation']['dataset_path']).resolve(),
-            report_path=Path(self.config['evaluation']['report_path']).resolve()
+            report_path=Path(self.config['evaluation'].get('report_path', '../report')).resolve(),
+            allowed_query_complexities=self.config['evaluation'].get('allowed_query_complexities', ['text'])
         )
 
         # Get chunking strategies
@@ -156,34 +156,42 @@ class BenchmarkFactory:
         # Create search configurations
         search_configs = self._create_search_configurations(search_strategies)
 
+        # Create PreprocessConfiguration with YAML values or defaults
+        preprocess_config = PreprocessConfiguration(
+            lowercase = self.config['preprocessing'].get('lowercase', True),
+            #strip_whitespace = self.config['preprocessing'].get('strip_whitespace', True),
+            #remove_punctuation = self.config['preprocessing'].get('remove_punctuation', False
+        )
+
         # Generate configurations for each combination
         for chunk_strategy in chunking_strategies:
             # Create chunker based on strategy
-            chunker = self._create_chunker(chunk_strategy, embedding_model_name)
+            chunker = self._create_chunker(chunk_strategy, embedding_model_name, preprocess_config)
 
             # Generate unique collection name
-            strategy_name = chunk_strategy['name']
-            collection_base_name = self.config['vector_database']['collection_name_suffix']
+            #strategy_name = chunk_strategy['name']
+            #collection_base_name = self.config['vector_database']['collection_name_suffix']
 
             # Create a cleaner collection name for the dual-level system
-            embedding_short_name = embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
-            collection_name = f"{strategy_name}chunking{embedding_short_name}"
+            #embedding_short_name = embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
+           # collection_name = f"{strategy_name}chunking{embedding_short_name}"
 
             # Create RAG configuration
             rag_config = RAGConfiguration(
                 chunking=chunker,
+                #collection_name = collection_name,
                 model_manager=model_manager,
-                collection_name=collection_name,
                 search_configs=search_configs,
                 main_folder=main_folder,
-                evaluation_configuration=eval_config
+                evaluation_configuration=eval_config,
+                preprocess_configuration=preprocess_config
             )
 
             configurations.append(rag_config)
 
         return configurations
 
-    def _create_chunker(self, chunk_strategy: dict, embedding_model: str) -> CustomChunker:
+    def _create_chunker(self, chunk_strategy: dict, embedding_model: str, preprocessing_configuration: PreprocessConfiguration) -> CustomChunker:
         """Create chunker based on strategy configuration"""
         strategy_name = chunk_strategy['name']
         blacklist_chapters = self.config['chunking'].get('blacklist_chapters', [])
@@ -198,6 +206,7 @@ class BenchmarkFactory:
             # Create CustomChunker with parameters that match the constructor signature
             return CustomChunker(
                 name=f"{strategy_name}_chunking",  # Add name parameter
+                preprocess_configuration=preprocessing_configuration,  # <-- fixed name
                 blacklist_chapters=blacklist_chapters,  # Pass as constructor parameter
                 tokenizer=tokenizer,
                 serializer_provider=MDTableSerializerProvider(),

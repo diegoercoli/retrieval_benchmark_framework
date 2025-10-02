@@ -329,6 +329,27 @@ class MetricsAggregator:
     def __init__(self):
         self.metrics: List[QueryEvaluationMetrics] = []
 
+        # ADD THESE NEW METHODS:
+
+    def get_distinct_query_count(self) -> int:
+        """
+        Get the count of distinct queries in the dataset.
+
+        Returns:
+            Number of unique query IDs
+        """
+        unique_query_ids = set(metric.query_id for metric in self.metrics)
+        return len(unique_query_ids)
+
+    def get_distinct_queries(self) -> set:
+        """
+        Get the set of distinct query IDs.
+
+        Returns:
+            Set of unique query IDs
+        """
+        return set(metric.query_id for metric in self.metrics)
+
     def add_metrics(self, metrics: QueryEvaluationMetrics):
         """Add query evaluation metrics to the aggregator"""
         self.metrics.append(metrics)
