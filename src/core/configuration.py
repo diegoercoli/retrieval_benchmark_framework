@@ -2,10 +2,14 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Set, List
-
 from docling_core.transforms.chunker import BaseChunker
-
 from src.core.model_manager import ModelManager
+from datetime import datetime
+from dataclasses import dataclass, field
+from pathlib import Path
+from datetime import datetime
+from typing import List
+from dataclasses import dataclass
 
 
 class SearchType(Enum):
@@ -19,8 +23,23 @@ class SearchConfiguration:
     top_k: int
     alpha: float
 
-from datetime import datetime
 
+@dataclass
+class PreprocessConfiguration:
+    """
+    Configuration for text preprocessing.
+
+    Attributes:
+        lowercase (bool): Convert all text to lowercase.
+        strip_whitespace (bool): Remove leading and trailing whitespace from text.
+        remove_punctuation (bool): Remove punctuation from text.
+    """
+    lowercase: bool = True
+    #strip_whitespace: bool = True
+    #remove_punctuation: bool = False
+
+
+@dataclass
 class EvaluationConfiguration:
     """
     Configuration for evaluation, including dataset and report paths.
@@ -28,11 +47,16 @@ class EvaluationConfiguration:
     Attributes:
         dataset_path (Path): Path to the dataset.
         report_path (Path): Path to the report directory.
+        allowed_query_complexities (List[str]): Allowed query complexity levels.
         timestamp (str): Local timestamp set at instantiation.
     """
-    def __init__(self, dataset_path: Path, report_path: Path):
-        self.dataset_path = dataset_path
-        self.report_path = report_path
+    dataset_path: Path
+    report_path: Path
+    allowed_query_complexities: List[str]
+    timestamp: str = field(init=False)
+
+    def __post_init__(self):
+        # Set the timestamp to the current local time in the specified format
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     @property
@@ -48,9 +72,17 @@ class EvaluationConfiguration:
 @dataclass
 class RAGConfiguration:
     r"""Configuration of RAG."""
+    preprocess_configuration: PreprocessConfiguration
     chunking : BaseChunker
     model_manager : ModelManager
-    collection_name : str
     search_configs : List[SearchConfiguration]
     main_folder : Path
     evaluation_configuration: EvaluationConfiguration
+    #collection_name as readonly property derived from main_folder name
+    @property
+    def collection_name(self) -> str:
+        str_lowercase = "lowercase" if self.preprocess_configuration.lowercase else "nolowercase"
+        embedding_model_name =  self.model_manager.config["embedding_model_name"]
+        embedding_short_name = embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
+        strategy_name = self.chunking.name
+        return f"{strategy_name}_{embedding_short_name}_{str_lowercase}"

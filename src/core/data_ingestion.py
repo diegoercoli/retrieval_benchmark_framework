@@ -52,13 +52,12 @@ class DocumentIngestionService(IngestionService):
             Exception: If processing fails.
         """
 
-       # if self.db_manager.collection_exists(config.collection_name):
-       #     if not overwrite:
-       #         print(f"Collection '{config.collection_name}' already exists. Skipping ingestion.")
-       #         return 0
-       #     else:
-       #         print(f"Collection '{config.collection_name}' already exists. Overwriting.")
-       #         self.db_manager.delete_collection(config.collection_name)
+        if self.db_manager.collection_exists(config.collection_name):
+            if not overwrite:
+                return 0
+            else:
+                print(f"Collection '{config.collection_name}' already exists. Overwriting.")
+                self.db_manager.delete_collection(config.collection_name)
 
         # Your business logic here:
         # 1. Read files from filesystem based on source
@@ -97,5 +96,3 @@ class DocumentIngestionService(IngestionService):
                 f.write("-" * 200 + "\n\n")
                 #print(f"=== Chunk_{i}_written ===")
         print(f"Chunks written to {filepath}")
-
-

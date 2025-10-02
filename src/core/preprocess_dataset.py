@@ -5,6 +5,8 @@ from enum import Enum
 from typing import List
 from pathlib import Path
 
+from src.core.configuration import EvaluationConfiguration, PreprocessConfiguration
+
 
 class ConfidenceLevel(Enum):
     LOW = 1
@@ -72,22 +74,58 @@ def parse_document_records(cell_value, confidence_value) -> List[GroundTruthDocu
     return records
 
 
-def process_dataset(dataset_path: Path) -> pd.DataFrame:
+def process_dataset(evaluation_config: EvaluationConfiguration, preprocess_config: PreprocessConfiguration) -> pd.DataFrame:
     """
-    Process the dataset and return a dataframe with columns: complexity, question, ground_truth
+    Process the dataset and return a dataframe with columns: complexity, question, ground_truth.
 
     Args:
-        dataset_path: Path to the Excel dataset file
+        config: EvaluationConfiguration object containing dataset_path and allowed_query_complexities.
+        preprocess_config: PreprocessConfiguration object specifying text preprocessing options.
 
     Returns:
-        DataFrame with processed data containing ground truth document records
+        DataFrame with processed data containing ground truth document records.
+        The 'question' column is lowercased if preprocess_config.lowercase is True.
     """
+    # Extract parameters from config
+    dataset_path = evaluation_config.dataset_path
+    allowed_query_complexities = evaluation_config.allowed_query_complexities
+
+    # Complexity mapping
+    complexity_mapping = {
+        'text': 'Descrizione_Testuale',
+        'image': 'Analisi_Immagine',
+        'table': 'Analisi_Tabella'
+    }
+
     # Load the dataset
     df = pd.read_excel(dataset_path)
 
-    # Filter for 'Analisi_Immagine' complexity
+    # Get complexity column name
     complexity_column = "Complessità domanda"
-    filtered_df = df[~df[complexity_column].str.contains('Analisi_Immagine', na=False, case=False)].copy()
+
+    # Apply filters
+    filtered_df = df.copy()
+
+    # 1. Filter by allowed query complexities
+    if allowed_query_complexities:
+        # Convert allowed complexities to dataset values
+        allowed_values = [complexity_mapping.get(c, c) for c in allowed_query_complexities]
+
+        # Filter rows where complexity matches allowed values
+        filtered_df = filtered_df[
+            filtered_df[complexity_column].isin(allowed_values)
+        ].copy()
+
+        print(f"Filtered by complexity: {len(df)} -> {len(filtered_df)} queries")
+
+    # 2. Filter out noisy queries
+    if 'Noise' in filtered_df.columns:
+        # Keep only rows where noise is empty/null
+        filtered_df = filtered_df[
+            filtered_df['Noise'].isna() | (filtered_df['Noise'] == '')
+            ].copy()
+
+        print(f"Filtered by noise: {len(filtered_df)} queries remaining")
 
     # Add header to questions
     def add_header(row):
@@ -117,8 +155,11 @@ def process_dataset(dataset_path: Path) -> pd.DataFrame:
     # Drop the intermediate columns and keep only the final three
     final_df = final_df[['complexity', 'question', 'ground_truth']]
 
-    #put finald_df['question'] as lowecase string
-    final_df['question'] = final_df['question'].str.lower()
+    # Convert question text to lowercase
+    if preprocess_config.lowercase:
+        final_df['question'] = final_df['question'].str.lower()
+
+    print(f"Final dataset: {len(final_df)} queries")
 
     return final_df
 

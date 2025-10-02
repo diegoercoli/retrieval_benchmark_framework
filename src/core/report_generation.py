@@ -29,11 +29,23 @@ class BenchmarkReportGenerator:
         Args:
             report_dir: Directory where reports will be saved (default: 'report')
         """
-        self.report_dir = evaluation_configuration.report_path_with_timestamp #/ datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.report_dir = evaluation_configuration.report_path_with_timestamp
         self.report_dir.mkdir(parents=True, exist_ok=True)
-        self.timestamp = evaluation_configuration.timestamp #.strftime("%Y%m%d_%H%M%S")
+        self.timestamp = evaluation_configuration.timestamp
         # Store configuration mappings for use across report generation
         self.configuration_mappings = {}
+
+    def _get_distinct_query_count(self, metrics_aggregator: MetricsAggregator) -> int:
+        """
+        Get the count of distinct queries in the dataset.
+
+        Args:
+            metrics_aggregator: Aggregator containing all metrics
+
+        Returns:
+            Number of distinct queries
+        """
+        return metrics_aggregator.get_distinct_query_count()
 
     def set_configuration_mappings(self, config_mappings: Dict[str, Dict[str, str]]):
         """
@@ -226,11 +238,14 @@ class BenchmarkReportGenerator:
     ) -> Path:
         """Generate JSON report for programmatic access"""
 
+        # Get distinct query count
+        distinct_queries = self._get_distinct_query_count(metrics_aggregator)
+
         # Prepare data structure
         report_data = {
             'metadata': {
                 'generated_at': datetime.now().isoformat(),
-                'total_queries': len(metrics_aggregator.metrics),
+                'total_queries': distinct_queries,
                 'total_configurations': len(metrics_aggregator.get_metrics_by_configuration())
             },
             'configuration_mappings': self.configuration_mappings,
@@ -339,16 +354,18 @@ class BenchmarkReportGenerator:
         """Create executive summary sheet with the requested 5-column structure and configuration table"""
         ws = wb.create_sheet("Executive Summary")
 
+        # Get distinct query count
+        distinct_queries = self._get_distinct_query_count(metrics_aggregator)
+
         # Title and metadata
         ws['A1'] = "RAG Benchmark Report - Executive Summary (Document vs Section Level)"
         ws['A1'].font = Font(size=16, bold=True)
         ws.merge_cells('A1:H1')
 
         ws['A3'] = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        ws['A4'] = f"Total Queries: {len(metrics_aggregator.metrics)}"
+        ws['A4'] = f"Total Queries: {distinct_queries}"
         ws['A5'] = f"Total Configurations: {len(metrics_aggregator.get_metrics_by_configuration())}"
-        ws[
-            'A6'] = "Note: Document-level metrics (filename match) should be >= Section-level metrics (exact section match)"
+        ws['A6'] = "Note: Document-level metrics (filename match) should be >= Section-level metrics (exact section match)"
 
         current_row = 8
 
@@ -484,10 +501,9 @@ class BenchmarkReportGenerator:
                 ws.cell(row=start_row, column=2, value=f"{config_desc[:25]}... ({best_value:.4f})")
                 start_row += 1
 
-        # Auto-adjust column widths - FIXED VERSION
-        column_widths = [25, 12, 10, 12, 10, 12, 10, 12, 10]  # Adjusted for the 5-column structure
+        # Auto-adjust column widths
+        column_widths = [25, 12, 10, 12, 10, 12, 10, 12, 10]
         for i, width in enumerate(column_widths, 1):
-            # Convert column number to letter manually to avoid MergedCell issue
             from openpyxl.utils import get_column_letter
             column_letter = get_column_letter(i)
             ws.column_dimensions[column_letter].width = width
@@ -551,9 +567,9 @@ class BenchmarkReportGenerator:
                 cell_range = f"{col_letter}{current_row + 1}:{col_letter}{len(df) + current_row}"
 
                 rule = ColorScaleRule(
-                    start_type='min', start_color='FF6B6B',  # Red
-                    mid_type='percentile', mid_value=50, mid_color='FFE66D',  # Yellow
-                    end_type='max', end_color='4ECDC4'  # Green
+                    start_type='min', start_color='FF6B6B',
+                    mid_type='percentile', mid_value=50, mid_color='FFE66D',
+                    end_type='max', end_color='4ECDC4'
                 )
                 ws.conditional_formatting.add(cell_range, rule)
 
@@ -845,7 +861,7 @@ class BenchmarkReportGenerator:
 
                 # Highlight top 3
                 if rank <= 3:
-                    colors = ['FFD700', 'C0C0C0', 'CD7F32']  # Gold, Silver, Bronze
+                    colors = ['FFD700', 'C0C0C0', 'CD7F32']
                     fill = PatternFill(start_color=colors[rank - 1], end_color=colors[rank - 1], fill_type="solid")
                     for col in range(1, 8):
                         ws.cell(row=current_row, column=col).fill = fill
@@ -894,6 +910,7 @@ class BenchmarkReportGenerator:
         """Generate HTML content for the report with configuration mapping"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
+        distinct_queries = self._get_distinct_query_count(metrics_aggregator)
 
         html = f"""
 <!DOCTYPE html>
@@ -920,7 +937,7 @@ class BenchmarkReportGenerator:
     <div class="header">
         <h1>RAG Benchmark Report - Dual Level Evaluation</h1>
         <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-        <p>Total Queries: {len(metrics_aggregator.metrics)}</p>
+        <p>Total Queries: {distinct_queries}</p>
         <p>Total Configurations: {len(config_averages)}</p>
         <p><strong>Evaluation Strategy:</strong> Document-level (filename match) and Section-level (exact section match)</p>
     </div>
@@ -1091,11 +1108,12 @@ class BenchmarkReportGenerator:
         """Generate Markdown content for the dual-level report with configuration mapping"""
 
         config_averages = metrics_aggregator.calculate_average_metrics_by_config()
+        distinct_queries = self._get_distinct_query_count(metrics_aggregator)
 
         md_content = f"""# RAG Benchmark Report - Dual Level Evaluation
 
 **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
-**Total Queries:** {len(metrics_aggregator.metrics)}  
+**Total Queries:** {distinct_queries}  
 **Total Configurations:** {len(config_averages)}
 
 ## Executive Summary
@@ -1178,6 +1196,7 @@ This report presents the results of benchmarking different RAG configurations us
         md_content += "- **MRR:** Reciprocal rank of first section-level relevant result\n"
 
         return md_content
+
 
     def _plot_dual_level_metrics_by_configuration(self, metrics_aggregator: MetricsAggregator, plots_dir: Path):
         """Plot dual-level metrics comparison by configuration with enhanced labels"""

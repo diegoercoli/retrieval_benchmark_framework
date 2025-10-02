@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import List
 import time
 from src.core.configuration import RAGConfiguration, SearchType, SearchConfiguration, EvaluationConfiguration
-from src.core.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
 from src.core.data_evaluation import EvaluationService
 from src.vectordb.weaviate_db_manager import WeaviateDBManager
 
