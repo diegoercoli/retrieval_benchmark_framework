@@ -60,6 +60,7 @@ class BenchmarkReportGenerator:
     def _create_configuration_mapping_table(self, ws, start_row: int, start_col: int = 1) -> int:
         """
         Create a configuration mapping table in an Excel worksheet.
+        NOW INCLUDES PREPROCESSING COLUMN.
 
         Args:
             ws: Excel worksheet object
@@ -72,8 +73,9 @@ class BenchmarkReportGenerator:
         if not self.configuration_mappings:
             return start_row
 
-        # Headers
-        headers = ['Configuration ID', 'Embedder Model', 'Search Strategy', 'Chunking Strategy']
+        # Headers - NOW INCLUDES PREPROCESSING
+        headers = ['Configuration ID', 'Embedder Model', 'Search Strategy',
+                   'Chunking Strategy', 'Preprocessing']
 
         # Title
         title_cell = ws.cell(row=start_row, column=start_col, value="Configuration Mapping")
@@ -101,10 +103,11 @@ class BenchmarkReportGenerator:
             ws.cell(row=current_row, column=start_col + 1, value=config_details.get('embedder', 'Unknown'))
             ws.cell(row=current_row, column=start_col + 2, value=config_details.get('search_strategy', 'Unknown'))
             ws.cell(row=current_row, column=start_col + 3, value=config_details.get('chunking_strategy', 'Unknown'))
+            ws.cell(row=current_row, column=start_col + 4, value=config_details.get('preprocessing', 'Unknown'))  # NEW
             current_row += 1
 
-        # Auto-adjust column widths
-        column_widths = [20, 25, 18, 20]
+        # Auto-adjust column widths - NOW INCLUDES PREPROCESSING COLUMN
+        column_widths = [20, 25, 18, 20, 15]  # Added width for preprocessing column
         for i, width in enumerate(column_widths):
             from openpyxl.utils import get_column_letter
             column_letter = get_column_letter(start_col + i)

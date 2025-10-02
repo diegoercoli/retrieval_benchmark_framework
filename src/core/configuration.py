@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List
 from dataclasses import dataclass
 
+from src.utils.name_cleaner import normalize_embedding_name
+
 
 class SearchType(Enum):
     KEYWORD_SEARCH = 1
@@ -83,6 +85,6 @@ class RAGConfiguration:
     def collection_name(self) -> str:
         str_lowercase = "lowercase" if self.preprocess_configuration.lowercase else "nolowercase"
         embedding_model_name =  self.model_manager.config["embedding_model_name"]
-        embedding_short_name = embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
+        embedding_short_name =  normalize_embedding_name(embedding_model_name)#embedding_model_name.split('/')[-1].replace('-', '').replace('_', '')
         strategy_name = self.chunking.name
         return f"{strategy_name}_{embedding_short_name}_{str_lowercase}"

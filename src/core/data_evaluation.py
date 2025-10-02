@@ -230,6 +230,7 @@ class EvaluationService:
     def _create_configuration_mappings(self, configs: List[RAGConfiguration]) -> dict:
         """
         Create configuration mappings from RAGConfiguration objects.
+        NOW INCLUDES PREPROCESSING CONFIGURATION.
 
         Args:
             configs: List of RAGConfiguration objects
@@ -257,10 +258,14 @@ class EvaluationService:
                 if hasattr(config.chunking, '_name'):
                     chunking_strategy = config.chunking._name
 
+                # NEW: Extract preprocessing configuration
+                preprocessing_info = "lowercase" if config.preprocess_configuration.lowercase else "no-lowercase"
+
                 config_mappings[configuration_id] = {
                     'embedder': embedder_name,
                     'search_strategy': search_strategy,
-                    'chunking_strategy': chunking_strategy
+                    'chunking_strategy': chunking_strategy,
+                    'preprocessing': preprocessing_info  # NEW FIELD
                 }
 
         return config_mappings
