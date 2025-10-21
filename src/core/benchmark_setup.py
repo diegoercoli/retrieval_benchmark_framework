@@ -4,6 +4,8 @@ import yaml
 
 from src.preprocessing.dataset_loader import load_dataset
 from src.rest_api.dataset import DatasetAPI
+from src.rest_api.vectordb import VectorDBAPI, VectorDBProviderCreate
+from src.vectordb.weaviate_db_manager import WeaviateDBManager
 
 
 class BenchmarkSetup:
@@ -69,12 +71,20 @@ class BenchmarkSetup:
         response = client.create_dataset(dataset_input)
         return response.id
 
-    def __setup_vector_database(self) -> None:
+    def __setup_vector_database(self) -> WeaviateDBManager:
         """
         Initialize and configure the vector database.
         Creates collections, sets up schemas, etc.
         """
-        pass
+        vector_db_config = self.config['vector_database']
+        client = VectorDBAPI(base_url=self.config['backend']['url'], timeout=30)
+        vector_db_settings = client.create_provider(VectorDBProviderCreate(name=vector_db_config['name'],port_number=vector_db_config['port_number']))
+        inference_url = self.config['embedding']['transformers_inference_api']
+        return WeaviateDBManager(
+            port=vector_db_settings.port_number,
+            grpc_port=vector_db_config.get('grpc_port', 50051),
+            inference_url=inference_url
+        )
 
     def __generate_configurations(self) -> list:
         """
@@ -94,12 +104,38 @@ class BenchmarkSetup:
             bool: True if initialization successful, False otherwise
         """
         try:
+            print("\n" + "=" * 60)
+            print("BENCHMARK INITIALIZATION")
+            print("=" * 60 + "\n")
+
+            # Step 1: Read configuration
+            print("[1/5] Reading configuration...")
             self.__read_config()
-            self.__fetch_knowledge_base()
+
+            # Step 2: Fetch knowledge base
+            print("\n[2/5] Fetching knowledge base...")
+            id_knowledge_base = self.__fetch_knowledge_base()
+
+            # Step 3: Read and submit dataset
+            print("\n[3/5] Reading and submitting dataset...")
             id_dataset = self.__read_dataset()
-            self.__setup_vector_database()
+
+            # Step 4: Setup vector database
+            print("\n[4/5] Setting up vector database...")
+            weaviate_db_manager = self.__setup_vector_database()
+
+            # Step 5: Generate configurations
+            print("\n[5/5] Generating experiment configurations...")
             self.__generate_configurations()
+
+            print("\n" + "=" * 60)
+            print("✓ INITIALIZATION COMPLETED SUCCESSFULLY")
+            print("=" * 60)
+
             return True
+
         except Exception as e:
-            print(f"Initialization failed: {e}")
+            print(f"\n✗ Initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
