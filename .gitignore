@@ -167,4 +167,5 @@ data/
 config/benchmark_config.yaml
 docker/docker-compose.yml
 
-src/.models
+**/.models/
+
