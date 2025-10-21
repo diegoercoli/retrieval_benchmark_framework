@@ -2,8 +2,6 @@ import math
 from dataclasses import dataclass
 from typing import List, Dict, Tuple
 import pandas as pd
-
-from src.preprocessing.preprocess_dataset import GroundTruthDocumentRecord
 from src.core.configuration import SearchType
 
 
@@ -42,6 +40,10 @@ class QueryEvaluationMetrics:
 
     # Counts for section level
     section_relevant_retrieved_count: int
+
+
+class GroundTruthDocumentRecord:
+    pass
 
 
 class RetrievalMetricsCalculator:

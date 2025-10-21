@@ -2,6 +2,7 @@ from pathlib import Path
 
 import yaml
 
+from src.core.benchmark_setup import BenchmarkSetup
 from src.core.experiment_factory import BenchmarkFactory
 from src.preprocessing.data_preprocessing import WordParser
 
@@ -18,33 +19,9 @@ def main():
         print("Starting RAG Benchmark System")
 
         # Configuration file path
-        config_path = Path("../config/benchmark_config.yaml").resolve()
-
-        # Optional: Run document preprocessing if needed
-        # This converts DOCX files to JSON format for faster processing
-        #run_preprocessing = input("Run document preprocessing? (y/n): ").lower().strip() == 'y'
-
-        print("Running document preprocessing...")
-        # Load configuration to get paths
-        with open(config_path, "r") as file:
-            config = yaml.safe_load(file)
-
-        # Create parser instance and process documents
-        word_parser = WordParser(
-            input_folder_path=config["loading"]["input_folder"],
-            output_folder_path=config["loading"]["output_folder"],
-        )
-
-        # Parse all files in the input folder
-        skipped_files = word_parser.parse_all_files()
-        if skipped_files:
-            print(f"Skipped {len(skipped_files)} files: {skipped_files}")
-        else:
-            print("All documents processed successfully")
-        # Run the complete benchmarking pipeline
-        print("Starting benchmark factory...")
-        benchmark_factory = BenchmarkFactory(config_path)
-        benchmark_factory.start()
+        config_path = "../config/benchmark_config.yaml"
+        benchmark_setup = BenchmarkSetup(config_path)
+        benchmark_setup.initialize()
 
         print("Benchmark completed successfully!")
 

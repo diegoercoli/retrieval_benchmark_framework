@@ -2,11 +2,11 @@ import json
 from typing import List
 
 from src.core.configuration import RAGConfiguration, SearchConfiguration, EvaluationConfiguration
-from src.preprocessing.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
+#from src.preprocessing.preprocess_dataset import process_dataset, GroundTruthDocumentRecord
 from src.retrieval.metrics import (
     RetrievalMetricsCalculator,
     MetricsAggregator,
-    QueryEvaluationMetrics
+    QueryEvaluationMetrics, GroundTruthDocumentRecord
 )
 
 

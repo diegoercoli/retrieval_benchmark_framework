@@ -1,188 +1,182 @@
 import pandas as pd
+import re
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
-import logging
+from typing import List
+
+from src.core.configuration import EvaluationConfiguration, PreprocessConfiguration
+from src.models import (
+    DatasetInput,
+    Query,
+    GroundTruth,
+    HierarchicalMetadata,
+    ConfidenceLevel,
+    ComplexityQuery
+)
 
 
-def read_excel(path: Path, sheet_name: Union[str, int, None] = 0,
-               header: Optional[int] = 0, **kwargs) -> pd.DataFrame:
+def parse_ground_truths(cell_value, confidence_value) -> List[GroundTruth]:
     """
-    Read an Excel file and return a pandas DataFrame.
+    Parse ground truth records from a cell into list of GroundTruth objects.
 
     Args:
-        path (Path): Path to the Excel file (.xlsx or .xls)
-        sheet_name (str, int, None): Name or index of sheet to read.
-                                   0 = first sheet (default)
-                                   None = all sheets (returns dict)
-        header (int, optional): Row to use as column names (0-indexed).
-                              None = no header row
-        **kwargs: Additional arguments passed to pd.read_excel()
+        cell_value: Cell content with document and section information
+        confidence_value: Confidence level string ('Low', 'Medium', 'High')
 
     Returns:
-        pd.DataFrame: DataFrame containing the Excel data
-
-    Raises:
-        FileNotFoundError: If the Excel file doesn't exist
-        ValueError: If the file is not a valid Excel format
-        PermissionError: If the file is locked or access is denied
-        Exception: For other pandas/Excel reading errors
-
-    Example:
-        >>> df = read_excel(Path("data/queries.xlsx"))
-        >>> df = read_excel(Path("data/results.xlsx"), sheet_name="Results", header=1)
+        List of GroundTruth objects
     """
+    if pd.isna(cell_value):
+        return []
 
-    # Validate input path
-    if not isinstance(path, Path):
-        path = Path(path)
+    # Map confidence string to enum
+    confidence_map = {
+        'Low': ConfidenceLevel.LOW,
+        'Medium': ConfidenceLevel.MEDIUM,
+        'High': ConfidenceLevel.HIGH
+    }
+    #confidence = confidence_map.get(confidence_value, ConfidenceLevel.MEDIUM)
+    #old_confidence = confidence_value
+    ground_truths = []
+    lines = str(cell_value).strip().split('\n')
+    confidence_values = []
+    if ',' in confidence_value:
+        confidence_values = confidence_value.strip().split(',')
+        confidence_values = [confidence_map[val.strip()] for val in confidence_values]
+    else:
+        confidence_values = [confidence_map[confidence_value.strip()]]
+    #print(f"{old_confidence} ===> {confidence_values}")
+    for index, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
 
-    # Check if file exists
-    if not path.exists():
-        raise FileNotFoundError(f"Excel file not found: {path}")
+        # Extract filename from path
+        if '\\' in line:
+            path_part = line.split(',')[0] if ',' in line else line
+            filename = path_part.split('\\')[-1]
 
-    # Check if it's a valid Excel file extension
-    valid_extensions = {'.xlsx', '.xls', '.xlsm'}
-    if path.suffix.lower() not in valid_extensions:
-        raise ValueError(f"Invalid Excel file format. Expected {valid_extensions}, got: {path.suffix}")
+            # Extract section info after comma or filename
+            if ',' in line:
+                section_part = line.split(',', 1)[1].strip()
+            else:
+                match = re.search(r'\.(docx|pdf|xlsx)(.+)', line)
+                section_part = match.group(2) if match else ""
 
-    # Check file size (warn for very large files)
-    file_size_mb = path.stat().st_size / (1024 * 1024)
-    if file_size_mb > 100:  # Files larger than 100MB
-        logging.warning(f"Large Excel file detected: {file_size_mb:.1f}MB. Reading may take time.")
+            # Parse section number and title
+            section_match = re.match(r'^(\d+(?:\.\d+)*)\s*(.*)$', section_part.strip())
 
-    try:
-        # Default pandas Excel reading parameters for robustness
-        default_kwargs = {
-            'engine': 'openpyxl' if path.suffix.lower() in ['.xlsx', '.xlsm'] else 'xlrd',
-            'na_values': ['', 'N/A', 'NA', 'n/a', 'null', 'NULL', '#N/A'],
-            'keep_default_na': True,
-        }
+            hierarchical_metadata = None
+            if section_match:
+                section_number = section_match.group(1)
+                section_title = section_match.group(2).strip()
 
-        # Merge user kwargs with defaults (user kwargs take precedence)
-        merged_kwargs = {**default_kwargs, **kwargs}
+                # Calculate depth from section number (e.g., "3.2.1" has depth 3)
+                depth = len(section_number.split('.'))
 
-        # Read the Excel file
-        df = pd.read_excel(
-            path,
-            sheet_name=sheet_name,
-            header=header,
-            **merged_kwargs
+                hierarchical_metadata = HierarchicalMetadata(
+                    id_section=section_number,
+                    section_title=section_title,
+                    depth=depth
+                )
+
+            ground_truths.append(GroundTruth(
+                filename=filename,
+                hierarchical_metadata=hierarchical_metadata,
+                confidence=confidence_values[index]
+            ))
+
+    return ground_truths
+
+
+def load_dataset(
+        dataset_path: Path,
+        dataset_name: str
+) -> DatasetInput:
+    """
+       Process the dataset and return a DatasetInput object for REST API submission.
+
+       Args:
+           dataset_path: Path for the dataset Excel file
+           dataset_name: Name for the dataset (default: "benchmark_dataset")
+
+       Returns:
+           DatasetInput object ready for API submission via create_dataset()
+    """
+    # Extract parameters from config
+
+    # Complexity mapping from Italian to API enum values
+    complexity_mapping = {
+        'Descrizione_Testuale': ComplexityQuery.TEXTUAL_DESCRIPTION,
+        'Analisi_Immagine': ComplexityQuery.IMAGE_ANALYSIS,
+        'Analisi_Tabella': ComplexityQuery.TABLE_ANALYSIS,
+        'text': ComplexityQuery.TEXTUAL_DESCRIPTION,
+        'image': ComplexityQuery.IMAGE_ANALYSIS,
+        'table': ComplexityQuery.TABLE_ANALYSIS
+    }
+
+    # Load the dataset
+    df = pd.read_excel(dataset_path)
+
+    # Get complexity column name
+    complexity_column = "Complessità domanda"
+
+    # Apply filters
+    filtered_df = df.copy()
+
+
+    # 2. Filter out noisy queries
+    if 'Noise' in filtered_df.columns:
+        filtered_df = filtered_df[
+            filtered_df['Noise'].isna() | (filtered_df['Noise'] == '')
+            ].copy()
+        print(f"Filtered by noise: {len(filtered_df)} queries remaining")
+
+    # Add header to questions
+    ''' 
+    def add_header(row):
+        modello_apparato = row["Modello Apparato"] if pd.notna(row["Modello Apparato"]) else "N/A"
+        customer = row["Customer"] if pd.notna(row["Customer"]) else "N/A"
+        original = row["Domanda rielaborata (ST)"] if pd.notna(row["Domanda rielaborata (ST)"]) else ""
+        header = f"Apparato: {modello_apparato}, Customer: {customer}. "
+        return header + str(original)
+
+    filtered_df["Domanda rielaborata (ST)"] = filtered_df.apply(add_header, axis=1)
+    '''
+
+
+    # Build list of Query objects
+    queries = []
+
+    for idx, row in filtered_df.iterrows():
+        # Map complexity to API enum
+        complexity_value = row["Complessità domanda"]
+        complexity_enum = complexity_mapping.get(
+            complexity_value,
+            ComplexityQuery.TEXTUAL_DESCRIPTION
         )
 
-        # Log basic info about the loaded data
-        if isinstance(df, pd.DataFrame):
-            logging.info(f"Successfully loaded Excel file: {path}")
-            logging.info(f"Shape: {df.shape} (rows, columns)")
-            if not df.empty:
-                logging.info(f"Columns: {list(df.columns)}")
-        else:
-            # Multiple sheets returned as dict
-            logging.info(f"Successfully loaded Excel file with {len(df)} sheets: {path}")
-
-        return df
-
-    except PermissionError as e:
-        raise PermissionError(
-            f"Permission denied reading Excel file: {path}. "
-            f"File may be open in another application. Error: {e}"
+        # Parse ground truths
+        ground_truths = parse_ground_truths(
+            row["Nome documento risposta"],
+            row["Confidenza documento"]
         )
 
-    except pd.errors.EmptyDataError:
-        logging.warning(f"Excel file is empty: {path}")
-        return pd.DataFrame()  # Return empty DataFrame
-
-    except Exception as e:
-        # Handle various pandas/Excel specific errors
-        error_type = type(e).__name__
-        error_msg = str(e)
-
-        # Provide more specific error messages for common issues
-        if "No such file or directory" in error_msg:
-            raise FileNotFoundError(f"Excel file not found: {path}")
-        elif "Unsupported format" in error_msg or "Excel file format cannot be determined" in error_msg:
-            raise ValueError(f"Unsupported or corrupted Excel file: {path}")
-        elif "worksheet" in error_msg.lower() and sheet_name:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel file: {path}")
-        else:
-            raise Exception(f"Error reading Excel file {path}. {error_type}: {error_msg}")
-
-
-def read_excel_with_validation(path: Path, required_columns: Optional[list] = None,
-                               sheet_name: Union[str, int, None] = 0) -> pd.DataFrame:
-    """
-    Read Excel file with column validation for your benchmark dataset.
-
-    Args:
-        path (Path): Path to Excel file
-        required_columns (list): List of required column names
-        sheet_name: Sheet to read
-
-    Returns:
-        pd.DataFrame: Validated DataFrame
-
-    Raises:
-        ValueError: If required columns are missing
-    """
-
-    df = read_excel(path, sheet_name=sheet_name)
-
-    if required_columns:
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(
-                f"Missing required columns in {path}: {missing_columns}. "
-                f"Available columns: {list(df.columns)}"
-            )
-
-    # Basic data quality checks
-    if df.empty:
-        logging.warning(f"Loaded DataFrame is empty: {path}")
-
-    # Check for completely empty rows
-    empty_rows = df.isnull().all(axis=1).sum()
-    if empty_rows > 0:
-        logging.info(f"Found {empty_rows} completely empty rows, removing them.")
-        df = df.dropna(how='all').reset_index(drop=True)
-
-    return df
-
-
-# Example usage for your benchmark dataset
-def load_benchmark_dataset(dataset_path: Path, required_columns: list ) -> pd.DataFrame:
-    """
-    Load your specific benchmark dataset with expected columns.
-
-    Args:
-        dataset_path (Path): Path to the Excel file
-        required_columns (list): List of required column names.
-                               Default: ['id', 'query', 'target_subsections']
-
-    Default expected columns for benchmark:
-    - id: Query identifier
-    - query: The question text
-    - target_subsections: Ground truth subsections (could be pipe-separated)
-    - document: Source document (optional)
-    """
-
-    if required_columns is None:
-        required_columns = ['id', 'query', 'target_subsections']
-
-    try:
-        df = read_excel_with_validation(
-            dataset_path,
-            required_columns=required_columns
+        # Create Query object
+        query = Query(
+            position_id=idx + 1,  # 1-indexed position
+            prompt=row["Domanda rielaborata (ST)"],
+            device=row.get("Modello Apparato") if pd.notna(row.get("Modello Apparato")) else None,
+            customer=row.get("Customer") if pd.notna(row.get("Customer")) else None,
+            complexity=complexity_enum,
+            ground_truths=ground_truths
         )
 
-        # Parse target_subsections if they're pipe-separated strings
-        if 'target_subsections' in df.columns:
-            # Convert string "subsec1|subsec2|subsec3" to list
-            df['target_subsections'] = df['target_subsections'].apply(
-                lambda x: str(x).split('|') if pd.notna(x) else []
-            )
+        queries.append(query)
 
-        logging.info(f"Loaded benchmark dataset with {len(df)} queries")
-        return df
+    print(f"Final dataset: {len(queries)} queries prepared for API submission")
 
-    except Exception as e:
-        logging.error(f"Failed to load benchmark dataset: {e}")
-        raise
+    # Create and return DatasetInput object
+    return DatasetInput(
+        dataset_name=dataset_name,
+        queries=queries
+    )
