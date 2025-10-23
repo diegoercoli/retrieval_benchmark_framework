@@ -36,6 +36,7 @@ def start_server( configured_model_manager: ModelManager, host: str = "0.0.0.0",
     #    format="%(asctime)s - %(levelname)s - %(message)s",
     #    datefmt="%Y-%m-%d %H:%M:%S"
     #)
+    global model_manager  # Add this line
     model_manager = configured_model_manager
     #Load the models
     model_manager.preload_models()
